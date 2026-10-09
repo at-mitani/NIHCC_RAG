@@ -1,0 +1,51 @@
+# secrets / local config
+.env
+# .env の控え。秘密情報を含むので追跡しない
+.env.bak*
+secrets/*
+!secrets/.gitkeep
+
+# data (never commit images, CSV, model weights)
+data/
+imports/
+models/
+*.png
+*.jpg
+*.jpeg
+*.tar.gz
+*.zip
+!apps/frontend/static/img/*.svg
+# 構成図・フロー図（医療画像ではない。docs/diagrams/build_diagrams.py が作る）
+!docs/diagrams/*.png
+!docs/diagrams/samples/*.png
+NIHCC/images/*.png
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.venv*/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# 作業用出力。tmp/ は使い捨ての置き場なので既定で追跡しない。
+# 正解 box（tmp/gold）と教師データ（tmp/chest/ec2-full/teacher_*.npz）だけを例外とする。
+tmp/*
+!tmp/gold/
+# ベクトルキャッシュは数十 MB になるので、例外の中でも除外する
+tmp/*/*.npz
+# 教師データ（画像名・14 所見・split。公開データ NIH ChestX-ray14 から作成）は公開する
+!tmp/chest/
+tmp/chest/*
+!tmp/chest/ec2-full/
+tmp/chest/ec2-full/*
+!tmp/chest/ec2-full/teacher_*.npz
+
+# misc
+.DS_Store
+Thumbs.db
+
+# 初期ユーザー定義（平文パスワードを含むためコミットしない）
+scripts/initial_users.json

@@ -1,0 +1,19 @@
+# ROI Service 依存（設計書 5.2 の採用ツール: OpenCV + NumPy + scikit-image + Pillow）
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+# 共有 contract の EmailStr（ユーザー管理）が必要とする
+email-validator==2.2.0
+numpy==2.2.1
+opencv-python-headless==4.11.0.86
+scikit-image==0.25.0
+pillow==11.1.0
+PyYAML==6.0.2
+# 肺野分割モデル（U-Net）の推論。torch は持ち込まない（image が 2GB を超えるため）。
+# ROI_PROFILE=nihcc-classical-v1 のときは import されない。
+onnxruntime==1.20.1
+httpx==0.28.1
+psycopg[binary,pool]==3.2.3
+pika==1.3.2
+PyJWT==2.10.1
+prometheus-client==0.21.1

@@ -1,0 +1,137 @@
+# =============================================================================
+# ベクトル用 Citus クラスタ
+#
+#   Coordinator 1 台 + Worker DB 5 台（計 6 コンテナ）。
+#
+#   検索の単位は画像 1 枚の胸部野（1 行 = 1 画像）なので、クラスタは 1 つ。
+#   shard 30 を Worker 5 台に 6 個ずつ載せる。
+#
+#   ネットワーク分離:
+#     - Worker は cluster-vector にのみ所属し、edge / app へ公開しない
+#     - Coordinator は data にも所属し、アプリケーションからの接続を受ける
+#
+#   注意: Coordinator 1 台構成は単一障害点である。本番相当環境では Coordinator の
+#   standby と Worker の replication factor 2 以上を追加する。
+#
+#   パスはプロジェクトディレクトリ（リポジトリルート）からの相対パスである。
+#   ルートの docker-compose.yml と併せて読み込む（.env の COMPOSE_FILE 参照）。
+# =============================================================================
+
+x-citus-common: &citus-common
+  image: ${CITUS_PGVECTOR_IMAGE:-local/citus-pgvector:14.2.0-pg17-v0.8.6}
+  build:
+    context: .
+    dockerfile: infra/postgres/Dockerfile.citus-pgvector
+    # **版はここで決める。** Dockerfile の既定値と二重管理にすると片方だけ
+    # 上げてしまう（PG_MAJOR だけ変えて base image が古いまま、など）。
+    args:
+      CITUS_IMAGE: citusdata/citus:${CITUS_VERSION:-14.2.0}-pg${PG_MAJOR:-17}
+      PG_MAJOR: ${PG_MAJOR:-17}
+      PGVECTOR_VERSION: ${PGVECTOR_VERSION:-0.8.6}
+  restart: unless-stopped
+  stop_grace_period: 30s
+  command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+  # Citus Community は Coordinator → Worker の内部接続を「クエリ実行中のロール」で
+  # 張るが、そのロールのパスワードを保持しない。trust 認証は使わない方針のため、
+  # 起動時に secret から .pgpass を生成して libpq へ渡す。
+  entrypoint:
+    - /bin/bash
+    - -c
+    - |
+      set -e
+      umask 077
+      : > "$$PGPASSFILE"
+      if [ -s /run/secrets/app_db_password ]; then
+        APP_PW="$$(cat /run/secrets/app_db_password)"
+        printf '*:*:*:app_ingest:%s\n*:*:*:app_search:%s\n' "$$APP_PW" "$$APP_PW" >> "$$PGPASSFILE"
+      fi
+      if [ -s /run/secrets/db_password ]; then
+        printf '*:*:*:postgres:%s\n' "$$(cat /run/secrets/db_password)" >> "$$PGPASSFILE"
+      fi
+      chmod 600 "$$PGPASSFILE"
+      exec docker-entrypoint.sh "$$@"
+    - --
+  secrets: [db_password, app_db_password]
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U postgres -d $${POSTGRES_DB} -h 127.0.0.1"]
+    interval: 10s
+    timeout: 5s
+    retries: 30
+    start_period: 40s
+  shm_size: 256mb
+  security_opt: ["no-new-privileges:true"]
+
+x-citus-env: &citus-env
+  POSTGRES_USER: postgres
+  PGPASSFILE: /var/lib/postgresql/.pgpass
+  POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+  POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+  PGDATA: /var/lib/postgresql/data
+
+x-conf-postgres: &conf-postgres
+  type: bind
+  source: ./infra/postgres/postgresql.vector.conf
+  target: /etc/postgresql/postgresql.conf
+  read_only: true
+
+x-conf-hba: &conf-hba
+  type: bind
+  source: ./infra/postgres/pg_hba.conf
+  target: /etc/postgresql/pg_hba.conf
+  read_only: true
+
+services:
+  vector-coordinator:
+    <<: *citus-common
+    hostname: vector-coordinator
+    environment: {<<: *citus-env, POSTGRES_DB: vector}
+    volumes: [{type: volume, source: vector-coordinator-data, target: /var/lib/postgresql/data}, *conf-postgres, *conf-hba]
+    networks: [data, cluster-vector]
+  vector-worker-1:
+    <<: *citus-common
+    hostname: vector-worker-1
+    environment: {<<: *citus-env, POSTGRES_DB: vector}
+    volumes: [{type: volume, source: vector-worker-1-data, target: /var/lib/postgresql/data}, *conf-postgres, *conf-hba]
+    networks: [cluster-vector]
+  vector-worker-2:
+    <<: *citus-common
+    hostname: vector-worker-2
+    environment: {<<: *citus-env, POSTGRES_DB: vector}
+    volumes: [{type: volume, source: vector-worker-2-data, target: /var/lib/postgresql/data}, *conf-postgres, *conf-hba]
+    networks: [cluster-vector]
+  vector-worker-3:
+    <<: *citus-common
+    hostname: vector-worker-3
+    environment: {<<: *citus-env, POSTGRES_DB: vector}
+    volumes: [{type: volume, source: vector-worker-3-data, target: /var/lib/postgresql/data}, *conf-postgres, *conf-hba]
+    networks: [cluster-vector]
+  vector-worker-4:
+    <<: *citus-common
+    hostname: vector-worker-4
+    environment: {<<: *citus-env, POSTGRES_DB: vector}
+    volumes: [{type: volume, source: vector-worker-4-data, target: /var/lib/postgresql/data}, *conf-postgres, *conf-hba]
+    networks: [cluster-vector]
+  vector-worker-5:
+    <<: *citus-common
+    hostname: vector-worker-5
+    environment: {<<: *citus-env, POSTGRES_DB: vector}
+    volumes: [{type: volume, source: vector-worker-5-data, target: /var/lib/postgresql/data}, *conf-postgres, *conf-hba]
+    networks: [cluster-vector]
+
+networks:
+  data:
+  cluster-vector:
+
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
+  app_db_password:
+    file: ./secrets/app_db_password.txt
+
+volumes:
+  vector-coordinator-data: {}
+  vector-worker-1-data: {}
+  vector-worker-2-data: {}
+  vector-worker-3-data: {}
+  vector-worker-4-data: {}
+  vector-worker-5-data: {}

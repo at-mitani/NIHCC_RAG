@@ -1,0 +1,167 @@
+# 手元（GPU 無し）で学習した小さいモデル用の profile。
+#
+# nihcc-unet-v1 は 384px / 8,000 枚 / base 32 を前提にしている（EC2 の A10G で学習）。
+# 手元は CUDA が使えず CPU 学習になるため、256px では 1 epoch に 36 分かかる（実測）。
+# そこで 160px / 1,000 枚 / base 16 まで落とした。**入力解像度が違うモデルは
+# 互換ではない**ので、profile を分けて roi_model_version も別にする。
+#
+# 本番のモデルが用意できたら nihcc-unet-v1 へ切り替える。
+# 肺野の取り方を学習した U-Net（CheXmask 教師）に差し替えた profile。
+#
+# 規則ベース（nihcc-classical-v1）は corpus の約 4 分の 1 で破綻する
+# （docs/deviations.md §10.26: Dice 中央値 0.828、Dice<0.7 または抽出失敗が 23.8%）。
+# 手で規則を足す調整は 8 案試して届かなかった（§10.24）ため、学習へ移した。
+#
+# **profile は全体の SHA-256 が parameter_hash になる。** 継承の仕組みは無いので
+# 規則ベースと重複する節も丸ごと持つ。重複は冗長だが、再現キーが profile 全体を
+# 覆うというこの設計の利点はそのまま残る。
+#
+# 運用手順は docs/lung-unet-runbook.md。
+schema_version: 1
+profile_name: nihcc-unet-local-v1
+algorithm_version: unet-lung-spine-local-v2.0.0
+input:
+  formats: [png, jpeg]
+  min_width: 512
+  min_height: 512
+  max_width: 4096
+  max_height: 4096
+  max_bytes: 20971520
+normalization:
+  low_percentile: 0.5
+  high_percentile: 99.5
+  output_dtype: uint8
+  work_side: 1024          # 内部処理は短辺 1024 相当へ縮小して再現性と速度を確保
+lung_segmentation:
+  backend: unet
+  # model volume 上の置き場所。compose で roi-service へ read-only mount する。
+  model_path: /models/lung-unet/lung-unet.onnx
+  # 学習解像度と揃える（build_lung_dataset.py の --size）。手元は 160px。
+  input_size: 160
+  threshold: 0.5
+  # GPU が使える環境では CUDAExecutionProvider を先頭に置く。
+  # 無ければ自動で CPU へ落ちる（segmenter.py が available providers で絞る）。
+  providers: [CPUExecutionProvider]
+
+# 以下 lung_candidate / component_filter / morphology / outline は unet backend では
+# 使われないが、schema の必須項目なので規則ベースと同じ値を残す。backend を
+# classical へ戻せばそのまま効く。
+lung_candidate:
+  intensity_mode: otsu_and_local
+  fixed_preview_range: [0, 107]
+  threshold_delta: 0.05
+  local_block_size_at_1024: 63
+  local_offset: 0.02
+  # 二値化入力にのみ適用する平滑化。0.0 で無効（実測で無効が最良のため既定 0.0）
+  smooth_sigma_ratio: 0.0
+  # 探索範囲は body bbox に対する比。**body_mask は軟部組織の凸包なので、肩が画像端へ
+  # 届く胸部写真では bbox が画面全体になる。** つまりこの比は実質「画像に対する比」
+  # として効く。そのため上端 0.12 は肺尖を水平に切り落としていた（実測: 1024px の
+  # 画像で y=122 の直線で切断。docs/deviations.md §10.20）。
+  #
+  # 上端を 0.03 へ下げて肺尖を拾い、左右を 0.12〜0.88 へ狭めて腋窩・上腕・鎖骨の
+  # 取り込みを抑える。120 枚の掃引で、肺野上端の中央値 0.119 -> 0.029、面積は
+  # 25.8% -> 25.5% と、肺尖を回復しつつ総面積は増えない組を選んだ。
+  allowed_x_ratio: [0.12, 0.88]
+  allowed_y_ratio: [0.03, 0.92]
+component_filter:
+  connectivity: 8
+  min_area_ratio: 0.010
+  max_area_ratio: 0.45
+  min_aspect_ratio: 0.20
+  max_aspect_ratio: 1.60
+  max_border_touch_ratio: 0.40
+morphology:
+  kernel_shape: ellipse
+  # 肋骨・血管による分断を橋渡しできる大きさ。24枚のsample sweepで決定した初期値。
+  kernel_short_side_ratio: 0.005
+  close_iterations: 2
+  open_iterations: 1
+outline:
+  # 肺野外周の整形。二値化だけで取ると、肋骨が明るいため肋間の暗い帯だけが残り、
+  # 外周が鋸歯状になる。参考図（NIHCC/sample/lung.jpg の (2)）の外周は連続した
+  # 滑らかな曲線であり、肋骨に沿った凹凸を持たない。
+  #
+  # **左右に分けた後で適用する。** 分ける前に強い閉処理をかけると上縦隔の暗部で
+  # 左右の肺が繋がり、縦隔・気管まで肺野に入る（docs/deviations.md §10.21）。
+  #
+  # 肋骨を橋渡しする閉処理の半径比（短辺に対する）。
+  close_ratio: 0.020
+  # 外周を弧長方向に低域通過させるときに残す調和次数。
+  # 大きいと凹凸が残り、小さいと肋骨横隔膜角のような鋭角まで丸まる。
+  harmonics: 12
+  # 肺野を「暗い範囲」に限定する上限。肺は空気を含むため暗く、鎖骨上・頸部の軟部組織は
+  # それより明るい。肺野中央 40%（確実に肺である範囲）の輝度のこの百分位を上限とし、
+  # それより暗く、かつ中央部と繋がっている範囲だけを肺野とする。
+  # 上げると肺尖の明るい部分まで残るが軟部組織も入り、下げると軟部組織は落ちるが
+  # 肺尖まで削れる（docs/deviations.md §10.22）。
+  apex_percentile: 85
+  # 暗さによる限定を適用する範囲（肺野の高さに対する上からの比）。
+  # 肺野全体へかけると下部・側方の本来の肺まで約 30% 削れる。軟部組織がはみ出すのは
+  # 上部なのでそこだけに効かせる。0.30 まで下げると鎖骨上のはみ出しが再発する
+  # （docs/deviations.md §10.23）。
+  apex_ratio: 0.45
+spine:
+  search_x_ratio: [0.30, 0.70]
+  min_continuity_ratio: 0.80
+  vertical_smooth_ratio: 0.03
+  polynomial_degree: 2
+  outlier_sigma: 2.0
+partition:
+  # ANATOMICAL_LOBES_V1 | EQUAL_THIRDS | OVERLAP_TWO_THIRDS
+  #
+  # ANATOMICAL_LOBES_V1: 参照図（右肺3葉・左肺2葉）の配置に合わせ、水平裂と斜裂の
+  #   投影で分割する。中葉は内側寄り、下葉は外側・下方に置かれ、上下の単純な
+  #   3 分割にはしない。境界値は正面投影上の見え方に対する近似であり、
+  #   解剖学的な確定境界ではない（投影ROI）。
+  mode: ANATOMICAL_LOBES_V1
+  # 値は肺 bbox 内の絶対高さ（上端 0、下端 1）。images_001 の 16 枚で、
+  # 参照図の見かけの面積比（右 0.40/0.17/0.43、左 0.47/0.53）に最も近い組を採用。
+  right:
+    # 水平裂（小葉間裂）の投影高さ。これより上が上葉。
+    horizontal_fissure_u: 0.38
+    # 斜裂（大葉間裂）の投影。内側で深く（下方まで）、外側で浅い。
+    # 内側では中葉がこの高さまで下り、外側では水平裂の直下から下葉になる。
+    oblique_medial_u: 0.70
+    oblique_lateral_u: 0.30
+  left:
+    # 左肺は 2 葉。斜裂のみで分ける。舌区(S4,S5)があるため内側では
+    # 上葉が下方まで伸び、外側では高い位置から下葉になる。
+    # 0.55 なら面積比は目標に最も近いが舌区が浅くなる。舌区が心陰影沿いに
+    # 下方へ伸びる実際の形を優先し 0.62 とした（面積比は約 0.51）。
+    oblique_medial_u: 0.62
+    oblique_lateral_u: 0.20
+  # 比較用（EQUAL_THIRDS のときに使用）
+  right_boundaries: [0.333333, 0.666667]
+  left_boundary: 0.666667
+  column_smooth_ratio: 0.02
+  row_smooth_ratio: 0.02
+crop:
+  # context | masked（抽出設計書 6.5.3）。
+  # 部位 mask の外接矩形は肺のほぼ全体を覆うため、context では RUL/RML/RLL の
+  # crop が 95% 以上同一になり、部位別の埋め込みが区別できない。実測により
+  # masked を既定とする。最終決定は正解データによる評価で行う。
+  embedding_crop: masked
+  margin_ratio: 0.05
+  background_value: 0
+  format: png
+  min_side_px: 24
+  # 埋め込み crop の短辺（0 で無効）。BiomedCLIP の前処理が短辺 224 へ
+  # 縮小するため、ROI 側で先に落として PNG 符号化・転送・再デコードを削る。
+  output_side: 224
+quality:
+  # 同側肺に対する各部位の期待面積比（partition.mode に対応する実測値）。
+  # ANATOMICAL_LOBES_V1 で images_001 の 24 枚を測定した平均。
+  # 正解データによる評価後に確定する暫定値。
+  region_expected_share:
+    RUL: 0.41
+    RML: 0.15
+    RLL: 0.43
+    LUL: 0.51
+    LLL: 0.49
+  lung_area_ratio: [0.02, 0.40]
+  lung_symmetry_ratio: [0.45, 2.20]
+  spine_center_ratio: [0.35, 0.65]
+  region_area_tolerance: 0.20
+  mask_border_touch_ratio: 0.20
+  min_region_confidence: 0.35

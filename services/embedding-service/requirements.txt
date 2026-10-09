@@ -1,0 +1,12 @@
+# Embedding Service の共通依存（torch 系は Dockerfile の WITH_TORCH で分離する）
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+# 共有 contract の EmailStr（ユーザー管理）が必要とする
+email-validator==2.2.0
+numpy==2.2.1
+pillow==11.1.0
+httpx==0.28.1
+psycopg[binary,pool]==3.2.3
+PyJWT==2.10.1
+prometheus-client==0.21.1

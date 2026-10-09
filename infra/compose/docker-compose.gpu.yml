@@ -1,0 +1,44 @@
+# =============================================================================
+# GPU 実行の追加設定（g5 / g6 / p4 などの NVIDIA インスタンス向け）
+#
+#   埋め込み推論だけを GPU へ載せる。ROI 抽出・DB・ワーカーは CPU のままである。
+#   ルートの docker-compose.yml とベクトル用クラスタの compose に重ねて読み込む。
+#
+#   .env:
+#     COMPOSE_FILE=docker-compose.yml:infra/compose/docker-compose.vectors.yml:infra/compose/docker-compose.gpu.yml
+#     COMPOSE_PATH_SEPARATOR=:
+#
+#   ホスト側の前提（SETUP_EC2.md §3〜§5）:
+#     - NVIDIA ドライバ（A10G なら 535 以降）
+#     - nvidia-container-toolkit（`docker run --rm --gpus all nvidia/cuda:12.1.0-base-ubuntu22.04 nvidia-smi` が通ること）
+#
+#   このファイルを読み込んだ状態で GPU が無いホストへ up すると起動に失敗する。
+#   CPU へ戻す場合は COMPOSE_FILE から本ファイルを外し、再ビルドする。
+# =============================================================================
+
+services:
+  embedding-service:
+    build:
+      args:
+        # CUDA 12.1 wheel。ドライバに合わせて cu118 / cu124 へ変えてよい。
+        TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu121}
+    environment:
+      EMBEDDING_DEVICE: cuda
+      # A10G は fp16 の Tensor Core を持つ。精度差は L2 正規化後で 1e-3 未満。
+      EMBEDDING_DTYPE: ${EMBEDDING_DTYPE:-float16}
+      # GPU では 1 インスタンスで足りる（1 回の順伝播が数ミリ秒のため）。
+      # 前処理（PNG 復号・リサイズ）はモデルを借りる前に行うので並行に走る。
+      EMBEDDING_MODEL_REPLICAS: ${EMBEDDING_MODEL_REPLICAS:-1}
+      EMBEDDING_TORCH_THREADS: ${EMBEDDING_TORCH_THREADS:-4}
+      OMP_NUM_THREADS: ${EMBEDDING_TORCH_THREADS:-4}
+      # read-only root filesystem のため、CUDA の JIT cache を tmpfs へ逃がす
+      CUDA_CACHE_PATH: /tmp/.nv
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              # 変数展開は文字列になり compose の型検査に落ちるため直値で書く。
+              # GPU が複数ある機種で全部使う場合は count: all にする。
+              count: 1
+              capabilities: [gpu]

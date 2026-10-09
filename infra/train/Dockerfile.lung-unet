@@ -1,0 +1,27 @@
+# 肺野分割モデル（U-Net）の学習用イメージ。
+#
+# **実行時に pip install しない。** 運用のコンテナは `read_only: true` で
+# `/tmp` 以外に書けない（docker-compose.yml の app-common）。これは意図した
+# 堅牢化なので、そちらを緩めるのではなく学習用だけを別のイメージにする。
+#
+# 土台は既存の embedding-service。torch が入っており、EC2 では
+# TORCH_INDEX_URL=cu121 で作られているので CUDA 版である。**新しく torch を
+# 入れ直さない**ことが要点で、学習と推論で版がずれない。
+#
+#   docker compose build embedding-service          # 土台を先に作る
+#   docker build -f infra/train/Dockerfile.lung-unet -t local/nihcc-lung-unet-train:1.0.0 .
+#
+# 使い方は docs/runbooks/lung-unet.md。
+ARG BASE=local/nihcc-embedding-service:1.0.0
+FROM ${BASE}
+
+USER root
+
+# onnx / onnxscript : ONNX への書き出し（torch 2.6 以降の exporter が要求する）
+# opencv            : 学習データの読み出しと水増し
+RUN pip install --no-cache-dir onnx onnxscript opencv-python-headless
+
+# 呼び出し側が --user で host の uid を指定するため、ここでは戻さない。
+# HOME は書ける場所を既定にしておく（uid が passwd に無くても pip/torch が困らない）。
+ENV HOME=/tmp
+WORKDIR /work

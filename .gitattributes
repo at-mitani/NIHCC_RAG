@@ -1,0 +1,16 @@
+# 改行コードの固定
+#
+# Windows の checkout では core.autocrlf=true が既定で、text ファイルが CRLF へ
+# 変換される。シェルスクリプトがこれに巻き込まれると、Linux でも Git Bash でも
+# `set -euo pipefail\r` が「pipefail\r」という不正なオプション名として解釈され、
+# 1 行目から動かなくなる（エラー文まで \r で上書きされて読みにくい）。
+#
+# コンテナは Linux で動き、スクリプトも Linux で実行する前提なので LF に固定する。
+*.sh text eol=lf
+
+# Dockerfile の RUN 行も shell へ渡るため揃えておく
+Dockerfile text eol=lf
+*.Dockerfile text eol=lf
+
+# コンテナへ入る設定ファイル
+*.conf text eol=lf

@@ -1,0 +1,444 @@
+# =============================================================================
+# NIHCC 胸部X線画像検索ローカルRAGシステム（構成は docs/DESIGN.md）
+#
+# ベクトル用 Citus クラスタ（coordinator 1 + worker 5）は
+# infra/compose/docker-compose.vectors.yml に分けている。.env の COMPOSE_FILE で両方を読み込む。
+#
+#   docker compose build
+#   docker compose up -d
+#   docker compose run --rm db-migrate
+#
+# ネットワーク:
+#   edge : 利用者 → Frontend → API
+#   app  : API / workers / AI サービス / Queue
+#   data : Metadata DB と Citus Coordinator
+# =============================================================================
+
+x-app-common: &app-common
+  restart: unless-stopped
+  stop_grace_period: 20s
+  security_opt: ["no-new-privileges:true"]
+  read_only: true
+  tmpfs: ["/tmp:size=256m"]
+  cap_drop: ["ALL"]
+  logging:
+    driver: json-file
+    options: {max-size: "10m", max-file: "3"}
+
+x-app-env: &app-env
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  TZ: ${TZ:-Asia/Tokyo}
+  # Metadata DB
+  METADATA_DB_HOST: metadata-db
+  METADATA_DB_PORT: "5432"
+  METADATA_DB_NAME: metadata
+  METADATA_DB_USER: app_meta
+  METADATA_DB_PASSWORD_FILE: /run/secrets/app_db_password
+  # ベクトル用 Citus Coordinator（Worker へは直接接続しない）
+  VECTOR_DB_PASSWORD_FILE: /run/secrets/app_db_password
+  VECTOR_HOST: vector-coordinator
+  VECTOR_DB: vector
+  # Queue
+  RABBITMQ_HOST: queue
+  RABBITMQ_PORT: "5672"
+  RABBITMQ_USER: ${RABBITMQ_USER:-nihcc}
+  RABBITMQ_PASSWORD_FILE: /run/secrets/rabbitmq_password
+  # サービス間 URL
+  ROI_SERVICE_URL: http://roi-service:8000
+  EMBEDDING_SERVICE_URL: http://embedding-service:8000
+  SEARCH_AGGREGATOR_URL: http://search-aggregator:8000
+  # バージョン・閾値
+  PREPROCESS_VERSION: ${PREPROCESS_VERSION:-prep-v1.1.0}
+  EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-512}
+  # 2 段検索（coarse -> fine）。fine 列の幅は取り込み側の検証にも使うため全サービスへ渡す
+  # 採用構成は胸部野の分類器のプロファイル（14 所見 + 正常らしさ = 15 次元）
+  EMBEDDING_FINE_DIMENSION: ${EMBEDDING_FINE_DIMENSION:-15}
+  # 肺野全体の形状（nihcc_rag.shape.LUNG_DIMENSION と揃える）
+  EMBEDDING_LUNG_DIMENSION: ${EMBEDDING_LUNG_DIMENSION:-16}
+  ROI_MIN_CONFIDENCE: ${ROI_MIN_CONFIDENCE:-0.35}
+  HNSW_EF_SEARCH: ${HNSW_EF_SEARCH:-100}
+  # iterative_scan が 1 回の検索で走査する行数の上限。実質的な照会時間の上限。
+  HNSW_MAX_SCAN_TUPLES: ${HNSW_MAX_SCAN_TUPLES:-20000}
+  VECTOR_STAGE1_MULTIPLIER: ${VECTOR_STAGE1_MULTIPLIER:-4}
+  VECTOR_STAGE1_MAX_LIMIT: ${VECTOR_STAGE1_MAX_LIMIT:-1000}
+  VECTOR_STAGE2_MIN_BUDGET_MS: ${VECTOR_STAGE2_MIN_BUDGET_MS:-200}
+  # 画像だけの検索の進め方（profile / coarse_to_fine）
+  IMAGE_SEARCH_STRATEGY: ${IMAGE_SEARCH_STRATEGY:-profile}
+  VECTOR_QUERY_TIMEOUT_MS: ${VECTOR_QUERY_TIMEOUT_MS:-2000}
+  API_SEARCH_TIMEOUT_MS: ${API_SEARCH_TIMEOUT_MS:-30000}
+  SEARCH_ASYNC_THRESHOLD_MS: ${SEARCH_ASYNC_THRESHOLD_MS:-2000}
+  MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-20971520}
+  QUERY_IMAGE_RETENTION_MINUTES: ${QUERY_IMAGE_RETENTION_MINUTES:-60}
+  IMPORT_ROOT: /imports
+  # 画面の公開 URL。パスワード再設定メールのリンク生成に使う。
+  APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8080}
+  # メール送信（パスワード再設定通知）。医療情報は本文へ含めない。
+  MAIL_ENABLED: ${MAIL_ENABLED:-1}
+  MAIL_FROM: ${MAIL_FROM:-no-reply@local.example}
+  MAIL_FROM_NAME: ${MAIL_FROM_NAME:-NIHCC RAG}
+  SMTP_HOST: ${SMTP_HOST:-mailpit}
+  SMTP_PORT: ${SMTP_PORT:-1025}
+  SMTP_USE_STARTTLS: ${SMTP_USE_STARTTLS:-0}
+  SMTP_USE_SSL: ${SMTP_USE_SSL:-0}
+
+services:
+  # ------------------------------------------------------------------ Frontend
+  frontend:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: apps/frontend/Dockerfile
+    image: local/nihcc-frontend:1.0.0
+    ports: ["${FRONTEND_PORT:-8080}:8080"]
+    networks: [edge, app]
+    depends_on:
+      backend-api: {condition: service_healthy}
+    tmpfs: ["/tmp:size=64m", "/var/cache/nginx:size=64m"]
+
+  # --------------------------------------------------------------- Backend API
+  backend-api:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: apps/backend-api/Dockerfile
+    image: local/nihcc-backend-api:1.0.0
+    environment:
+      <<: *app-env
+      JWT_SECRET_FILE: /run/secrets/jwt_secret
+      JWT_ISSUER: ${JWT_ISSUER:-nihcc-rag-local}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-nihcc-rag-api}
+      JWT_TTL_SECONDS: ${JWT_TTL_SECONDS:-28800}
+      LOCAL_USERS: ${LOCAL_USERS}
+      METADATA_POOL_MAX: "10"
+    secrets: [app_db_password, rabbitmq_password, jwt_secret]
+    volumes:
+      - type: bind
+        source: ${NIHCC_DATA_DIR:-../NIHCC}
+        target: /imports/nihcc
+        read_only: true
+    ports: ["${BACKEND_API_PORT:-8000}:8000"]
+    networks: [edge, app, data]
+    depends_on:
+      metadata-db: {condition: service_healthy}
+      queue: {condition: service_healthy}
+      mailpit: {condition: service_started}
+
+  # ------------------------------------------------------------ Ingest Workers
+  ingest-worker:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: apps/ingest-worker/Dockerfile
+    image: local/nihcc-ingest-worker:1.0.0
+    environment:
+      <<: *app-env
+      INGEST_WORKER_PREFETCH: ${INGEST_WORKER_PREFETCH:-4}
+      INGEST_STORE_REGION_CROPS: ${INGEST_STORE_REGION_CROPS:-false}
+      VECTOR_POOL_MAX: "2"
+      METADATA_POOL_MAX: "4"
+    secrets: [app_db_password, rabbitmq_password]
+    volumes:
+      - type: bind
+        source: ${NIHCC_DATA_DIR:-../NIHCC}
+        target: /imports/nihcc
+        read_only: true
+    networks: [app, data]
+    deploy:
+      replicas: ${INGEST_WORKER_REPLICAS:-2}
+    depends_on:
+      metadata-db: {condition: service_healthy}
+      queue: {condition: service_healthy}
+      roi-service: {condition: service_healthy}
+      embedding-service: {condition: service_healthy}
+
+  # ------------------------------------------------------------- Search Worker
+  search-worker:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: apps/search-worker/Dockerfile
+    image: local/nihcc-search-worker:1.0.0
+    environment:
+      <<: *app-env
+      SEARCH_WORKER_PREFETCH: ${SEARCH_WORKER_PREFETCH:-2}
+      METADATA_POOL_MAX: "4"
+    secrets: [app_db_password, rabbitmq_password]
+    networks: [app, data]
+    deploy:
+      replicas: ${SEARCH_WORKER_REPLICAS:-1}
+    depends_on:
+      metadata-db: {condition: service_healthy}
+      queue: {condition: service_healthy}
+
+  # --------------------------------------------------------- Search Aggregator
+  search-aggregator:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: apps/search-aggregator/Dockerfile
+    image: local/nihcc-search-aggregator:1.0.0
+    environment:
+      <<: *app-env
+      VECTOR_POOL_MAX: "4"
+    secrets: [app_db_password]
+    networks: [app, data]
+    depends_on:
+      vector-coordinator: {condition: service_healthy}
+
+  # ------------------------------------------------------------- ROI Service
+  roi-service:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: services/roi-service/Dockerfile
+    image: local/nihcc-roi-service:1.0.0
+    environment:
+      <<: *app-env
+      # 胸部野の抽出には U-Net の心臓 mask が要る（規則ベースは心臓を出さない）
+      ROI_PROFILE: ${ROI_PROFILE:-nihcc-unet-local-v1}
+    volumes:
+      # 肺野分割モデル（U-Net）。ホストで学習して持ち込む（docs/runbooks/lung-unet.md）。
+      - type: bind
+        source: ${LUNG_MODEL_DIR:-./infra/lung-unet}
+        target: /models/lung-unet
+        read_only: true
+    networks: [app]
+    # GPU 機では埋め込みが速くなり ROI 抽出（CPU）が律速になる。
+    # ingest_stage_duration_seconds{stage="roi"} が伸びるようなら増やす。
+    deploy:
+      replicas: ${ROI_SERVICE_REPLICAS:-1}
+
+  # -------------------------------------------------------- Embedding Service
+  embedding-service:
+    <<: *app-common
+    build:
+      context: .
+      dockerfile: services/embedding-service/Dockerfile
+      args:
+        WITH_TORCH: ${WITH_TORCH:-true}
+        TORCH_INDEX_URL: ${TORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
+    image: local/nihcc-embedding-service:1.0.0
+    environment:
+      <<: *app-env
+      EMBEDDING_BACKEND: ${EMBEDDING_BACKEND:-biomedclip}
+      EMBEDDING_MODEL_ID: ${EMBEDDING_MODEL_ID:-hf-hub:microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224}
+      EMBEDDING_MODEL_REVISION: ${EMBEDDING_MODEL_REVISION:-}
+      # 2 段検索の 2 段目。既定 none（無効）。有効化の前提は .env の説明を読むこと
+      EMBEDDING_FINE_BACKEND: ${EMBEDDING_FINE_BACKEND:-none}
+      EMBEDDING_FINE_MODEL_ID: ${EMBEDDING_FINE_MODEL_ID:-}
+      EMBEDDING_FINE_MODEL_REVISION: ${EMBEDDING_FINE_MODEL_REVISION:-}
+      EMBEDDING_FINE_MODEL_REPLICAS: ${EMBEDDING_FINE_MODEL_REPLICAS:-1}
+      # 2 段目に胸部野の分類器（chest-profile）を使う場合の backbone と学習済み成果物。
+      # backbone の revision は成果物と照合する（未固定は起動を止める。
+      # docs/OPERATIONS.md「モデルの入れ替え」）
+      EMBEDDING_FINE_BACKBONE: ${EMBEDDING_FINE_BACKBONE:-rad-dino}
+      EMBEDDING_FINE_BACKBONE_DIMENSION: ${EMBEDDING_FINE_BACKBONE_DIMENSION:-768}
+      CHEST_HEAD_PATH: ${CHEST_HEAD_PATH:-/models/chest/head-pool-chest.npz}
+      # 版を固定していない分類器でも起動させるか。**本番では false。** 手元の試用だけ true
+      CHEST_HEAD_ALLOW_UNPINNED: ${CHEST_HEAD_ALLOW_UNPINNED:-false}
+      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-32}
+      # mask pooling 用。518 四方は token が 1,369 個あり 224 四方の約 7 倍で、
+      # attention は token 数の 2 乗に効く。上の値は流用しない。
+      EMBEDDING_POOL_BATCH_SIZE: ${EMBEDDING_POOL_BATCH_SIZE:-8}
+      EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cpu}
+      EMBEDDING_DTYPE: ${EMBEDDING_DTYPE:-float32}
+      EMBEDDING_TORCH_THREADS: ${EMBEDDING_TORCH_THREADS:-3}
+      OMP_NUM_THREADS: ${EMBEDDING_TORCH_THREADS:-3}
+      # プロセス内に持つモデル数。replicas x THREADS が vCPU を超えないこと
+      EMBEDDING_MODEL_REPLICAS: ${EMBEDDING_MODEL_REPLICAS:-2}
+      MAX_TEXT_TOKENS: ${MAX_TEXT_TOKENS:-256}
+      MODEL_WARMUP_BATCHES: ${MODEL_WARMUP_BATCHES:-3}
+      HYBRID_IMAGE_WEIGHT: ${HYBRID_IMAGE_WEIGHT:-0.70}
+      HF_HOME: /models/hf-cache
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
+      TRANSFORMERS_OFFLINE: ${HF_HUB_OFFLINE:-0}
+    volumes:
+      # モデル artifact は read-only mount を原則とする。
+      # 初回のみ download するため rw で確保し、検証後に :ro へ切り替える。
+      - model-cache:/models/hf-cache
+      # 胸部野の分類器（scripts/export_chest_head.py の出力）。ホストで作って持ち込む。
+      # 2 段目を使わない構成では参照されない（空ディレクトリでよい）。
+      - type: bind
+        source: ${CHEST_HEAD_DIR:-./infra/chest}
+        target: /models/chest
+        read_only: true
+    networks: [app]
+
+  # ---------------------------------------------------------------- Metadata DB
+  metadata-db:
+    image: postgres:${PG_MAJOR:-17}-alpine
+    restart: unless-stopped
+    stop_grace_period: 30s
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    environment:
+      POSTGRES_DB: metadata
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+      PGDATA: /var/lib/postgresql/data
+    secrets: [db_password]
+    volumes:
+      - type: volume
+        source: metadata-data
+        target: /var/lib/postgresql/data
+      - type: bind
+        source: ./infra/postgres/postgresql.metadata.conf
+        target: /etc/postgresql/postgresql.conf
+        read_only: true
+      - type: bind
+        source: ./infra/postgres/pg_hba.conf
+        target: /etc/postgresql/pg_hba.conf
+        read_only: true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d metadata -h 127.0.0.1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    shm_size: 256mb
+    networks: [data]
+
+  # --------------------------------------------------------------------- Queue
+  queue:
+    image: rabbitmq:3.13-management-alpine
+    restart: unless-stopped
+    hostname: nihcc-queue
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-nihcc}
+    # RabbitMQ 3.13 の entrypoint は *_FILE 形式の環境変数に対応しないため、
+    # secret を読み出して RABBITMQ_DEFAULT_PASS へ渡す（secret はイメージへ焼かない）。
+    entrypoint:
+      - /bin/sh
+      - -c
+      - export RABBITMQ_DEFAULT_PASS="$$(cat /run/secrets/rabbitmq_password)"; exec docker-entrypoint.sh rabbitmq-server
+    secrets: [rabbitmq_password]
+    volumes:
+      - type: volume
+        source: queue-data
+        target: /var/lib/rabbitmq
+    ports: ["${RABBITMQ_UI_PORT:-15672}:15672"]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 40s
+    networks: [app]
+
+  # ------------------------------------------------------------------- Mail
+  # ローカル検証用の SMTP サーバ（受信専用・外部へ中継しない）。
+  # 組織の SMTP リレーを使う場合は SMTP_HOST / SMTP_PORT を差し替え、
+  # このサービスを停止する。
+  mailpit:
+    image: axllent/mailpit:v1.21
+    restart: unless-stopped
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+      MP_MAX_MESSAGES: "500"
+      TZ: ${TZ:-Asia/Tokyo}
+    ports: ["${MAILPIT_UI_PORT:-8025}:8025"]
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks: [app]
+
+  # ------------------------------------------------------------ Migration Job
+  db-migrate:
+    build:
+      context: .
+      dockerfile: db/migrate/Dockerfile
+    image: local/nihcc-db-migrate:1.0.0
+    profiles: ["migrate"]
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      APP_DB_PASSWORD_FILE: /run/secrets/app_db_password
+      METADATA_DB_HOST: metadata-db
+      METADATA_DB_NAME: metadata
+      # Worker 5 台に 6 個ずつ均等に載る数
+      CITUS_SHARD_COUNT: ${CITUS_SHARD_COUNT:-30}
+      WORKERS_PER_CLUSTER: "5"
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-512}
+      EMBEDDING_FINE_DIMENSION: ${EMBEDDING_FINE_DIMENSION:-15}
+      # 肺野全体の形状（nihcc_rag.shape.LUNG_DIMENSION と揃える）
+      EMBEDDING_LUNG_DIMENSION: ${EMBEDDING_LUNG_DIMENSION:-16}
+    secrets: [db_password, app_db_password]
+    networks: [data, cluster-vector]
+    depends_on:
+      metadata-db: {condition: service_healthy}
+      vector-coordinator: {condition: service_healthy}
+      vector-worker-1: {condition: service_healthy}
+      vector-worker-2: {condition: service_healthy}
+      vector-worker-3: {condition: service_healthy}
+      vector-worker-4: {condition: service_healthy}
+      vector-worker-5: {condition: service_healthy}
+
+  # ------------------------------------------------------------- Observability
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    profiles: ["observability"]
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    volumes:
+      - type: bind
+        source: ./infra/monitoring/prometheus.yml
+        target: /etc/prometheus/prometheus.yml
+        read_only: true
+      - type: volume
+        source: prometheus-data
+        target: /prometheus
+    ports: ["${PROMETHEUS_PORT:-9090}:9090"]
+    networks: [app]
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    profiles: ["observability"]
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_password
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    secrets: [grafana_password]
+    volumes:
+      - type: bind
+        source: ./infra/monitoring/grafana-datasources.yml
+        target: /etc/grafana/provisioning/datasources/datasources.yml
+        read_only: true
+      - type: volume
+        source: grafana-data
+        target: /var/lib/grafana
+    ports: ["${GRAFANA_PORT:-3000}:3000"]
+    networks: [app]
+    depends_on: [prometheus]
+
+networks:
+  edge:
+  app:
+  data:
+
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
+  app_db_password:
+    file: ./secrets/app_db_password.txt
+  rabbitmq_password:
+    file: ./secrets/rabbitmq_password.txt
+  jwt_secret:
+    file: ./secrets/jwt_secret.txt
+  grafana_password:
+    file: ./secrets/grafana_password.txt
+
+volumes:
+  metadata-data: {}
+  queue-data: {}
+  model-cache: {}
+  prometheus-data: {}
+  grafana-data: {}

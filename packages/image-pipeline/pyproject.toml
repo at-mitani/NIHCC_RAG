@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nihcc-image-pipeline"
+version = "1.0.0"
+description = "Classical lung field / spine / 5-region ROI extraction for frontal chest radiographs"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+image_pipeline = ["profiles/*.yaml"]

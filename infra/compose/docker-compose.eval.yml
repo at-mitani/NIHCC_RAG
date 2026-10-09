@@ -1,0 +1,44 @@
+# =============================================================================
+# 検索品質評価（scripts/region_signal_eval.py）のための一時的な追加設定
+#
+#   embedding-service・roi-service・metadata-db を**ホストへ公開**する。
+#   roi-service は 1 台のときだけ公開できる（ROI_SERVICE_REPLICAS=1。複数台では
+#   同じホストポートを取り合って起動しない）。
+#
+#   評価スクリプトはホスト側で ROI を抽出し、埋め込みだけを HTTP で投げる。こうすると
+#   ホストに torch を入れずに GPU 推論を使える。**どのコンテナの中でも評価は完結
+#   しない**ためである（embedding-service には OpenCV と image_pipeline が無く、
+#   roi-service には torch が無く、かつ DB へも届かない）。
+#
+#   結果を DB へ残すには、ホストから metadata-db へ届く必要もある。
+#
+#   .env へ本ファイルを足して up し直す:
+#     COMPOSE_FILE=docker-compose.yml:infra/compose/docker-compose.vectors.yml:infra/compose/docker-compose.gpu.yml:infra/compose/docker-compose.eval.yml
+#     COMPOSE_PATH_SEPARATOR=:
+#
+#   公開は評価中だけにすること。内部サービスは Docker ネットワーク内に閉じる方針である。評価が終わったら COMPOSE_FILE から外して
+#   up し直し、ポートを閉じる。
+#
+#   セキュリティグループでこのポートを外部へ開けないこと。ホスト内からのみ
+#   使う（必要なら SSH ポートフォワードで手元へ回す）。
+# =============================================================================
+
+services:
+  embedding-service:
+    ports: ["127.0.0.1:${EMBEDDING_SERVICE_PORT:-8002}:8000"]
+
+  # 本番の取り込み経路が評価と同じ特徴を作るかを確かめるため
+  # （scripts/chest_image_eval.py verify-ingest）。
+  # embedding-service と同じく loopback だけに公開する。外へ開けないこと。
+  roi-service:
+    ports: ["127.0.0.1:${ROI_SERVICE_PORT:-8001}:8000"]
+
+  # 評価結果を DB へ残すため（docs/OPERATIONS.md §6）。
+  #
+  # 評価スクリプトはホスト側で ROI を抽出するので、コンテナの中では動かせない
+  # （cv2 を持つのは roi-service だけで、そこは DB へ到達できない）。結果として
+  # **ホストから DB へ届く必要がある**。
+  #
+  # embedding-service と同じく loopback だけに公開する。外へ開けないこと。
+  metadata-db:
+    ports: ["127.0.0.1:${METADATA_DB_PORT_HOST:-55432}:5432"]

@@ -1,0 +1,29 @@
+# syntax=docker/dockerfile:1
+# Citus + pgvector。
+# 公式 Citus image を base に pgvector を追加ビルドする。
+# 実導入時は image digest を固定し、Citus と pgvector の互換性・性能試験を
+# 通した組み合わせだけを採用する。Coordinator と Worker は同一 digest を使う。
+ARG CITUS_IMAGE=citusdata/citus:14.2.0-pg17
+FROM ${CITUS_IMAGE}
+
+ARG PGVECTOR_VERSION=0.8.6
+ARG PG_MAJOR=17
+
+USER root
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      build-essential ca-certificates git postgresql-server-dev-${PG_MAJOR} \
+ && git clone --depth 1 --branch "v${PGVECTOR_VERSION}" \
+      https://github.com/pgvector/pgvector.git /tmp/pgvector \
+ && make -C /tmp/pgvector OPTFLAGS="" \
+ && make -C /tmp/pgvector install \
+ && apt-get purge -y --auto-remove build-essential git postgresql-server-dev-${PG_MAJOR} \
+ && rm -rf /tmp/pgvector /var/lib/apt/lists/*
+
+# 初期化の最後に PGPASSWORD を落とす。名前が `zzz-` なのは、他の初期化
+# スクリプト（Citus の extension 作成など）より後に読ませるため。
+# **実行権を付けないこと。** source されないと意味が無い（中身に理由を書いた）。
+COPY --chmod=0444 infra/postgres/zzz-unset-pgpassword.sh \
+     /docker-entrypoint-initdb.d/zzz-unset-pgpassword.sh
+
+USER postgres

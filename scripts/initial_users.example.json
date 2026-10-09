@@ -1,0 +1,32 @@
+{
+  "_comment": [
+    "初期ユーザー定義のひな型。scripts/initial_users.json にコピーして書き換えてください。",
+    "コピー先は .gitignore 済みです（平文パスワードを Git に含めないため）。",
+    "password は 8 文字以上 128 文字以下。DB には scrypt ハッシュのみ保存されます。",
+    "role は viewer / operator / admin のいずれか。admin を最低 1 件含めてください。",
+    "username・password・role・email は必須、memo は任意です。"
+  ],
+  "users": [
+    {
+      "username": "admin",
+      "password": "CHANGE-ME-admin",
+      "role": "admin",
+      "email": "admin@example.local",
+      "memo": "管理者。ユーザー管理とモデル版の切替ができます。"
+    },
+    {
+      "username": "operator",
+      "password": "CHANGE-ME-operator",
+      "role": "operator",
+      "email": "operator@example.local",
+      "memo": "取り込み担当。データ取り込みと検索ができます。"
+    },
+    {
+      "username": "viewer",
+      "password": "CHANGE-ME-viewer",
+      "role": "viewer",
+      "email": "viewer@example.local",
+      "memo": null
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+# メトリクス収集（設計書 14.1）
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    system: nihcc-rag
+
+scrape_configs:
+  - job_name: backend-api
+    metrics_path: /metrics
+    static_configs: [{targets: ["backend-api:8000"]}]
+
+  - job_name: search-aggregator
+    metrics_path: /metrics
+    static_configs: [{targets: ["search-aggregator:8000"]}]
+
+  - job_name: roi-service
+    metrics_path: /metrics
+    static_configs: [{targets: ["roi-service:8000"]}]
+
+  - job_name: embedding-service
+    metrics_path: /metrics
+    static_configs: [{targets: ["embedding-service:8000"]}]
+
+  # worker はレプリカ数が可変のため DNS ディスカバリで収集する
+  - job_name: ingest-worker
+    metrics_path: /metrics
+    dns_sd_configs:
+      - names: ["ingest-worker"]
+        type: A
+        port: 9100
+
+  - job_name: search-worker
+    metrics_path: /metrics
+    dns_sd_configs:
+      - names: ["search-worker"]
+        type: A
+        port: 9101
+
+  - job_name: prometheus
+    static_configs: [{targets: ["localhost:9090"]}]

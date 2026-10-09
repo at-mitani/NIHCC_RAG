@@ -1,0 +1,10 @@
+# BiomedCLIP を OpenCLIP でロードするための依存（設計書 7.3.4）。
+# torch / torchvision は Dockerfile が先に TORCH_INDEX_URL から導入する
+# （CPU なら .../whl/cpu、GPU なら .../whl/cu121）。ここでは版を固定するだけで、
+# 導入済みであれば pip は再取得しない。残りは PyPI から取得する。
+torch==2.5.1
+torchvision==0.20.1
+open_clip_torch==2.29.0
+timm==1.0.12
+transformers==4.47.1
+huggingface_hub==0.27.0
