@@ -1,4 +1,5 @@
 # 運用マニュアル
+[English](OPERATIONS_EN.md) | 日本語
 
 日々の運用、更新の反映、障害対応。**運用者向け**である。
 
@@ -282,8 +283,8 @@ roi-service は U-Net で肺野・心臓を分割する（**必須**。規則ベ
 2. `.env` で `EMBEDDING_FINE_BACKEND=chest-profile` と `EMBEDDING_FINE_MODEL_REVISION` を設定する
 3. 取り込み経路が学習と同じ特徴を作るかを確かめてから取り込む（`chest_image_eval.py verify-ingest`）
 
-入れると、画像検索は所見プロファイルの全件検索、文章を含む検索は BiomedCLIP → プロファイルの
-2 段検索になる（[MULTIMODAL.md](MULTIMODAL.md) §4.1）。分類器を差し替えたら、既存行の
+入れると、画像検索は所見プロファイルの全件検索になる。文章を含む検索は BiomedCLIP だけの
+1 段検索のまま（プロファイルはテキストを扱えない。[MULTIMODAL.md](MULTIMODAL.md) §4.1）。分類器を差し替えたら、既存行の
 `embedding_fine` と所見の推定は古い分類器のものなので、取り込み直しが要る。
 
 ### 5.3 埋め込みモデルの取得
@@ -608,7 +609,7 @@ Grafana（`localhost:3000`）で見る。主な指標。
 |---|---|
 | `ingest_stage_duration_seconds{stage="roi"}` | ROI が律速になっていないか |
 | ベクトル書き込みの成否 | 失敗が増えていないか |
-| 検索の応答時間 | 2 秒を超えると非同期へ落ちる |
+| 検索の応答時間 | 遅いときは画面の非同期実行（`Prefer: respond-async`）を使う |
 
 `roi` が伸びるようなら `ROI_SERVICE_REPLICAS` を増やす。
 

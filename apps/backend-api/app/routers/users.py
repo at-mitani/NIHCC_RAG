@@ -47,7 +47,7 @@ def _client_ip(request: Request) -> str | None:
 @router.get("", response_model=UserListResponse)
 def list_users(
     principal: Admin,
-    include_inactive: bool = Query(default=True, description="無効化済みの利用者も含める"),
+    include_inactive: bool = Query(default=True, description="Include deactivated users"),
 ) -> UserListResponse:
     rows = user_service.list_users(include_inactive=include_inactive)
     return UserListResponse(users=[UserSummary(**row) for row in rows], total=len(rows))
@@ -146,7 +146,8 @@ def change_password(
     )
     return AcceptedResponse(
         status="succeeded",
-        detail="パスワードを変更しました。安全のため、再度ログインしてください。",
+        detail="Your password was changed. For security, please sign in again.",
+        message_id="PASSWORD_CHANGED",
     )
 
 
@@ -167,9 +168,11 @@ def request_reset(payload: PasswordResetRequest, request: Request) -> AcceptedRe
     )
     return AcceptedResponse(
         detail=(
-            "入力されたメールアドレスが登録されている場合、パスワード再設定用の URL を送信しました。"
-            f"URL の有効期限は {user_service.RESET_TOKEN_TTL_MINUTES} 分です。"
-        )
+            "If the email address you entered is registered, a URL for resetting your password "
+            f"has been sent. The URL expires in {user_service.RESET_TOKEN_TTL_MINUTES} minutes."
+        ),
+        message_id="PASSWORD_RESET_REQUESTED",
+        params={"ttl": user_service.RESET_TOKEN_TTL_MINUTES},
     )
 
 
@@ -183,7 +186,9 @@ def confirm_reset(payload: PasswordResetConfirmRequest, request: Request) -> Acc
         trace_id=getattr(request.state, "trace_id", None),
     )
     return AcceptedResponse(
-        status="succeeded", detail="パスワードを再設定しました。新しいパスワードでログインしてください。"
+        status="succeeded",
+        detail="Your password was reset. Please sign in with the new password.",
+        message_id="PASSWORD_RESET_DONE",
     )
 
 

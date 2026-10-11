@@ -1,5 +1,7 @@
 # 胸部野の分類器の作成（教師データ・学習・評価・書き出し）
 
+[English](chest-classifier_EN.md) | 日本語
+
 所見プロファイル（`EMBEDDING_FINE_BACKEND=chest-profile`）が使う分類器
 `infra/chest/head-pool-chest.npz` を作る手順。全 112,120 枚から胸部野
 （肺野＋縦隔＋横隔膜）の特徴を作り、画像単位のラベル（14 所見）で分類器を学習し、

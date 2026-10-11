@@ -178,7 +178,8 @@ def test_estimate_probability_is_bounded(value: float) -> None:
 def test_response_carries_the_not_a_diagnosis_label() -> None:
     """推定には「診断ではない」見出しが必ず付く（推定の表示規則）。"""
     response = SearchResponse(search_id=uuid.uuid4(), status="SUCCEEDED", mode="IMAGE_TO_IMAGE")
-    assert "診断ではありません" in response.estimate_label
+    # サーバの文言は英語。画面は辞書で表示言語に訳す（test_frontend_i18n）
+    assert "not a diagnosis" in response.estimate_label
     assert response.estimate_label == ESTIMATE_LABEL
     assert response.rerank_status is None
     assert response.stage1_count == 0

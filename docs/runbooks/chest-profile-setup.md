@@ -1,5 +1,7 @@
 # 所見プロファイルを有効にした構築と全量取り込み（EC2）
 
+[English](chest-profile-setup_EN.md) | 日本語
+
 胸部野の分類器を入れて `EMBEDDING_FINE_BACKEND=chest-profile` を有効にし、全 112,120 枚を
 取り込む手順。有効にすると次のようになる（[MULTIMODAL.md](../MULTIMODAL.md) §4.1）。
 

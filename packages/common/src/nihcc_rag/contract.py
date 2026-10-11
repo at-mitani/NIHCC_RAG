@@ -17,7 +17,22 @@ RegionCode = Literal["RUL", "RML", "RLL", "LUL", "LLL"]
 PoolMaskCode = Literal["RUL", "RML", "RLL", "LUL", "LLL", "LUNG", "CHEST", "WHOLE"]
 SearchMode = Literal["IMAGE_TO_IMAGE", "TEXT_TO_IMAGE", "HYBRID"]
 
-RESEARCH_WARNING = "研究用途です。検索結果および付随ラベルは診断を示しません。"
+#: **利用者へ返す文言は英語で書く。** 画面は表示言語を切り替えられるので、
+#: 画面の辞書（apps/frontend/static/i18n/*.json の `server.<id>`）で訳す。
+#: 訳すための鍵と差し込む値は ServerMessage で文言と一緒に返す。
+RESEARCH_WARNING = "For research use only. Search results and dataset labels do not indicate a diagnosis."
+RESEARCH_WARNING_ID = "RESEARCH_USE"
+
+
+class ServerMessage(BaseModel):
+    """画面で訳すための文言。`text` は英語の原文で、辞書に `id` が無いときに出す。"""
+
+    id: str
+    text: str
+    params: dict[str, Any] = {}
+
+
+RESEARCH_MESSAGE = ServerMessage(id=RESEARCH_WARNING_ID, text=RESEARCH_WARNING)
 
 
 # --- 認証 -------------------------------------------------------------------
@@ -160,8 +175,9 @@ class SearchRequest(BaseModel):
         return self
 
 
-#: 所見の推定を画面に出すときの見出し。**診断ではない**ことを常に添える。
-ESTIMATE_LABEL = "所見の推定（研究用・診断ではありません）"
+#: 所見の推定を画面に出すときの見出し。**診断ではない**ことを常に添える。画面は辞書の
+#: results.estimateHeading で表示言語に訳して出す（どの言語の文言も「診断ではない」ことを含める）。
+ESTIMATE_LABEL = "Estimated findings (research use, not a diagnosis)"
 
 
 class FindingEstimate(BaseModel):
@@ -244,7 +260,10 @@ class SearchResponse(BaseModel):
     stage1_count: int = 0
     reranked_count: int = 0
     partial: bool = False
+    #: 英語の警告文。画面は warning_details（同じ順・同じ件数）を訳して出す。
+    #: 文字列のまま残しているのは、保存済みの非同期検索の応答を読めるようにするため
     warnings: list[str] = [RESEARCH_WARNING]
+    warning_details: list[ServerMessage] = [RESEARCH_MESSAGE]
     duration_ms: int = 0
     #: **胸郭の形が似た症例**（画像単位）。
     #: 所見の判別ではない。
@@ -300,6 +319,7 @@ class ImageMetadata(BaseModel):
     estimate_label: str = ESTIMATE_LABEL
     source_metadata: dict[str, Any] | None = None
     warnings: list[str] = [RESEARCH_WARNING]
+    warning_details: list[ServerMessage] = [RESEARCH_MESSAGE]
 
 
 # --- 内部サービス間契約 ------------------------------------------------------
@@ -749,4 +769,7 @@ class PasswordResetConfirmRequest(BaseModel):
 
 class AcceptedResponse(BaseModel):
     status: str = "accepted"
+    #: 英語の文言。画面は message_id と params で表示言語に訳して出す
     detail: str
+    message_id: str | None = None
+    params: dict[str, Any] = {}

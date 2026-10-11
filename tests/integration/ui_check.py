@@ -30,7 +30,8 @@ def main() -> int:
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
-        page = browser.new_page(viewport={"width": 1440, "height": 1000})
+        # 画面は日本語の文言を検査するので、ブラウザの言語を日本語に固定する
+        page = browser.new_page(viewport={"width": 1440, "height": 1000}, locale="ja-JP")
         errors: list[str] = []
         page.on("pageerror", lambda exc: errors.append(str(exc)))
         page.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)

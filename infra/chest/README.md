@@ -1,4 +1,5 @@
 # 胸部野の分類器の置き場
+[English](README_EN.md) | 日本語
 
 `scripts/export_chest_head.py` が書き出す学習済みの分類器（`head-pool-chest.npz`）を
 置く。`docker-compose.yml` が `/models/chest` へ **read-only** で mount し、

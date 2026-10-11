@@ -140,8 +140,8 @@ def bootstrap_users() -> int:
                     passwords.hash_password(password),
                     role,
                     f"{username}@{domain}",
-                    "LOCAL_USERS から自動作成された初期ユーザー。"
-                    "運用開始前にメールアドレスとパスワードを更新してください。",
+                    "Initial user created automatically from LOCAL_USERS. "
+                    "Update the email address and password before going live.",
                 ),
             )
             created += 1
@@ -157,6 +157,13 @@ def bootstrap_users() -> int:
 # --- 認証 --------------------------------------------------------------------
 
 
+def _invalid_credentials() -> problem.ProblemError:
+    # 利用者が無い場合とパスワード違いを同じ文言にし、どちらかを判別させない
+    return problem.unauthorized(
+        "The user name or password is incorrect.", message_id="AUTH_INVALID_CREDENTIALS"
+    )
+
+
 def authenticate(username: str, password: str) -> AccountUser:
     with db.metadata_conn() as conn:
         row = db.fetch_one(
@@ -168,12 +175,13 @@ def authenticate(username: str, password: str) -> AccountUser:
     if row is None:
         # 存在しない利用者でも同等の計算量を消費し、応答時間差で存在を推測させない
         passwords.dummy_verify()
-        raise problem.unauthorized("ユーザー名またはパスワードが正しくありません。")
+        raise _invalid_credentials()
     if not passwords.verify_password(password, row["password_hash"]):
-        raise problem.unauthorized("ユーザー名またはパスワードが正しくありません。")
+        raise _invalid_credentials()
     if not row["is_active"]:
         raise problem.unauthorized(
-            "このアカウントは無効化されています。管理者へ連絡してください。"
+            "This account has been deactivated. Contact an administrator.",
+            message_id="AUTH_ACCOUNT_DISABLED",
         )
 
     with db.metadata_conn() as conn:
@@ -227,27 +235,38 @@ def verify_token(token: str) -> Principal:
             issuer=config.env("JWT_ISSUER", "nihcc-rag-local"),
         )
     except jwt.ExpiredSignatureError:
-        raise problem.unauthorized("アクセストークンの有効期限が切れています。") from None
+        raise problem.unauthorized(
+            "The access token has expired.", message_id="AUTH_TOKEN_EXPIRED"
+        ) from None
     except jwt.InvalidTokenError:
-        raise problem.unauthorized("アクセストークンが不正です。") from None
+        raise problem.unauthorized(
+            "The access token is invalid.", message_id="AUTH_TOKEN_INVALID"
+        ) from None
 
     user_id = payload.get("uid")
     if not user_id:
-        raise problem.unauthorized("アクセストークンに利用者 ID が含まれていません。")
+        raise problem.unauthorized(
+            "The access token does not contain a user ID.", message_id="AUTH_TOKEN_INVALID"
+        )
 
     user = load_user(str(user_id))
     if user is None:
-        raise problem.unauthorized("利用者が存在しません。")
+        raise problem.unauthorized("The user does not exist.", message_id="AUTH_USER_NOT_FOUND")
     if not user.is_active:
-        raise problem.unauthorized("このアカウントは無効化されています。")
+        raise problem.unauthorized(
+            "This account has been deactivated.", message_id="AUTH_ACCOUNT_DISABLED"
+        )
     # パスワード変更前に発行されたトークンは失効させる。
     # 秒単位の iat では同一秒内の前後を判定できないため iat_ms を使う
     # （iat_ms を持たないトークンは iat + 1 秒で保守的に判定する）。
     issued_at = float(payload.get("iat_ms") or (float(payload.get("iat", 0)) + 1))
     if issued_at < user.password_changed_at:
-        raise problem.unauthorized("パスワードが変更されたため、再ログインが必要です。")
+        raise problem.unauthorized(
+            "The password was changed, so you need to sign in again.",
+            message_id="AUTH_PASSWORD_CHANGED",
+        )
     if user.role not in ROLES:
-        raise problem.unauthorized("利用者の権限が不正です。")
+        raise problem.unauthorized("The user's role is invalid.", message_id="AUTH_ROLE_INVALID")
 
     return Principal(
         subject=user.username, role=user.role, user_id=user.user_id, email=user.email

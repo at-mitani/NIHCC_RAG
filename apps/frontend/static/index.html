@@ -3,34 +3,45 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>NIHCC 胸部X線画像検索ローカルRAG</title>
+<title>NIHCC</title>
 <link rel="stylesheet" href="/styles.css">
 </head>
+<!--
+  表示用の文言は static/i18n/{ja,en,zh}.json に置く。ここには書かない。
+    data-i18n="key"             : 要素の textContent
+    data-i18n-placeholder="key" : placeholder 属性（title / alt / aria-label も同じ形）
+  子要素（input など）を持つ label は、文言を <span data-i18n> に入れる
+  （textContent を差し替えると子要素ごと消えるため）。
+-->
 <body>
 <header class="topbar">
   <div class="brand">
     <span class="logo">NIHCC</span>
-    <span class="title">胸部X線画像検索ローカルRAG</span>
+    <span class="title" data-i18n="app.brandTitle"></span>
   </div>
   <div class="session">
-    <span id="session-user" class="muted">未ログイン</span>
-    <button id="logout" class="ghost" hidden>ログアウト</button>
+    <!-- 言語名は切り替え先の言語で書く（読めない言語で書くと戻せなくなる） -->
+    <select id="lang-select" class="lang-select" data-i18n-aria-label="header.language">
+      <option value="ja">日本語</option>
+      <option value="en">English</option>
+      <option value="zh">中文（简体）</option>
+    </select>
+    <span id="session-user" class="muted"></span>
+    <button id="logout" class="ghost" hidden data-i18n="header.logout"></button>
   </div>
 </header>
 
-<p class="research-banner" role="note">
-  研究・教育・技術検証用です。表示されるラベルはデータセット付随ラベル（読影レポートからの自動抽出による画像単位の弱教師ラベル）であり、確定診断ではありません。検索結果は類似性の提示であり、疾患の有無・重症度・因果関係を示しません。
-</p>
+<p class="research-banner" role="note" data-i18n="banner.research"></p>
 
 <!-- ログイン -->
 <section id="view-login" class="view">
   <form id="login-form" class="card narrow">
-    <h2>ログイン</h2>
-    <label>ユーザー名<input id="login-user" autocomplete="username" required></label>
-    <label>パスワード<input id="login-password" type="password" autocomplete="current-password" required></label>
-    <button type="submit" class="primary">ログイン</button>
-    <p class="muted small">ローカル IdP による認証です。役割は viewer / operator / admin。</p>
-    <p><a href="#" id="go-forgot" class="link">パスワードをお忘れの方はこちら</a></p>
+    <h2 data-i18n="login.heading"></h2>
+    <label><span data-i18n="login.username"></span><input id="login-user" autocomplete="username" required></label>
+    <label><span data-i18n="login.password"></span><input id="login-password" type="password" autocomplete="current-password" required></label>
+    <button type="submit" class="primary" data-i18n="login.submit"></button>
+    <p class="muted small" data-i18n="login.idpNote"></p>
+    <p><a href="#" id="go-forgot" class="link" data-i18n="login.forgotLink"></a></p>
     <p id="login-error" class="error" hidden></p>
     <p id="login-notice" class="notice" hidden></p>
   </form>
@@ -39,15 +50,12 @@
 <!-- パスワード忘れ（メールアドレス入力） -->
 <section id="view-forgot" class="view" hidden>
   <form id="forgot-form" class="card narrow">
-    <h2>パスワードの再設定</h2>
-    <p class="muted small">
-      登録済みのメールアドレスを入力してください。該当するアカウントがある場合、
-      パスワード再設定用の URL をメールで送信します。URL の有効期限は
-      <span id="forgot-ttl">10</span> 分です。
-    </p>
-    <label>メールアドレス<input id="forgot-email" type="email" autocomplete="email" required></label>
-    <button type="submit" class="primary">再設定用 URL を送信</button>
-    <p><a href="#" id="back-to-login" class="link">ログイン画面へ戻る</a></p>
+    <h2 data-i18n="forgot.heading"></h2>
+    <!-- 有効期限（分）を埋め込むので app.js の applyPolicyHints が書く -->
+    <p class="muted small" id="forgot-description"></p>
+    <label><span data-i18n="forgot.email"></span><input id="forgot-email" type="email" autocomplete="email" required></label>
+    <button type="submit" class="primary" data-i18n="forgot.submit"></button>
+    <p><a href="#" id="back-to-login" class="link" data-i18n="common.backToLogin"></a></p>
     <p id="forgot-error" class="error" hidden></p>
     <p id="forgot-notice" class="notice" hidden></p>
   </form>
@@ -56,20 +64,20 @@
 <!-- 仮パスワード変更 URL からの再設定 -->
 <section id="view-reset" class="view" hidden>
   <form id="reset-form" class="card narrow">
-    <h2>新しいパスワードの設定</h2>
+    <h2 data-i18n="reset.heading"></h2>
     <p class="muted small">
-      入力間違い防止のため 2 回入力してください。<span class="policy-hint"></span>
+      <span data-i18n="reset.description"></span><span class="policy-hint"></span>
     </p>
-    <label>新しいパスワード
+    <label><span data-i18n="common.newPassword"></span>
       <input id="reset-password" type="password" autocomplete="new-password" required
              minlength="8" maxlength="128">
     </label>
-    <label>新しいパスワード（確認）
+    <label><span data-i18n="common.newPasswordConfirm"></span>
       <input id="reset-password-confirm" type="password" autocomplete="new-password" required
              minlength="8" maxlength="128">
     </label>
-    <button type="submit" class="primary">パスワードを設定</button>
-    <p><a href="#" id="reset-to-login" class="link">ログイン画面へ戻る</a></p>
+    <button type="submit" class="primary" data-i18n="reset.submit"></button>
+    <p><a href="#" id="reset-to-login" class="link" data-i18n="common.backToLogin"></a></p>
     <p id="reset-error" class="error" hidden></p>
     <p id="reset-notice" class="notice" hidden></p>
   </form>
@@ -78,79 +86,78 @@
 <!-- メイン -->
 <main id="view-main" class="view" hidden>
   <nav class="tabs" role="tablist">
-    <button class="tab active" data-tab="search">画像検索</button>
-    <button class="tab" data-tab="results">検索結果</button>
-    <button class="tab" data-tab="ingest">データ取り込み</button>
-    <button class="tab" data-tab="jobs">取り込み履歴</button>
-    <button class="tab" data-tab="admin">管理</button>
-    <button class="tab" data-tab="users">ユーザー管理</button>
-    <button class="tab" data-tab="password">パスワード変更</button>
+    <button class="tab active" data-tab="search" data-i18n="tabs.search"></button>
+    <button class="tab" data-tab="results" data-i18n="tabs.results"></button>
+    <button class="tab" data-tab="ingest" data-i18n="tabs.ingest"></button>
+    <button class="tab" data-tab="jobs" data-i18n="tabs.jobs"></button>
+    <button class="tab" data-tab="admin" data-i18n="tabs.admin"></button>
+    <button class="tab" data-tab="users" data-i18n="tabs.users"></button>
+    <button class="tab" data-tab="password" data-i18n="tabs.password"></button>
   </nav>
 
   <!-- 画像検索 -->
   <section class="panel active" data-panel="search">
     <div class="grid two">
       <div class="card">
-        <h2>検索対象画像</h2>
+        <h2 data-i18n="search.imageHeading"></h2>
         <div id="dropzone" class="dropzone">
-          <p>PNG / JPEG をドラッグ＆ドロップ、またはクリックして選択</p>
+          <p data-i18n="search.dropzone"></p>
           <input id="file-input" type="file" accept="image/png,image/jpeg" hidden>
         </div>
         <div id="preview-wrap" hidden>
-          <img id="preview" alt="検索対象画像のプレビュー">
+          <img id="preview" data-i18n-alt="search.previewAlt">
           <dl class="kv" id="preview-facts"></dl>
-          <button id="clear-image" class="ghost">画像を外す</button>
+          <button id="clear-image" class="ghost" data-i18n="search.clearImage"></button>
         </div>
       </div>
 
       <div class="card">
-        <h2>検索条件</h2>
-        <label>検索モード
+        <h2 data-i18n="search.conditionsHeading"></h2>
+        <label><span data-i18n="search.mode"></span>
           <select id="mode">
-            <option value="IMAGE_TO_IMAGE">画像 → 画像（類似画像検索）</option>
-            <option value="TEXT_TO_IMAGE">テキスト → 画像（所見文から検索）</option>
-            <option value="HYBRID">ハイブリッド（画像＋テキスト）</option>
+            <option value="IMAGE_TO_IMAGE" data-i18n="search.mode.imageToImage"></option>
+            <option value="TEXT_TO_IMAGE" data-i18n="search.mode.textToImage"></option>
+            <option value="HYBRID" data-i18n="search.mode.hybrid"></option>
           </select>
         </label>
 
         <div id="text-block" hidden>
-          <label>所見テキスト
-            <input id="text" placeholder="例: 右上肺野の結節影 / pulmonary nodule in the right upper lung field">
+          <label><span data-i18n="search.text"></span>
+            <input id="text" data-i18n-placeholder="search.textPlaceholder">
           </label>
-          <label>入力言語
+          <label><span data-i18n="search.textLanguage"></span>
             <select id="text-language">
-              <option value="ja">日本語（承認済みローカル辞書で英語化）</option>
-              <option value="en">英語（そのまま埋め込み）</option>
+              <option value="ja" data-i18n="search.textLanguage.ja"></option>
+              <option value="en" data-i18n="search.textLanguage.en"></option>
             </select>
           </label>
           <details>
-            <summary class="muted small">登録済みの定型日本語所見を見る</summary>
+            <summary class="muted small" data-i18n="search.phrasesSummary"></summary>
             <div id="phrases" class="phrases"></div>
           </details>
         </div>
 
-        <label id="weight-block" hidden>画像の重み alpha: <output id="weight-out">0.70</output>
+        <label id="weight-block" hidden><span data-i18n="search.imageWeight"></span> <output id="weight-out">0.70</output>
           <input id="image-weight" type="range" min="0.05" max="0.95" step="0.05" value="0.70">
         </label>
 
         <div class="grid three">
-          <label>Top-K<input id="top-k" type="number" min="1" max="100" value="10"></label>
-          <label>candidate_K<input id="candidate-k" type="number" min="1" max="500" placeholder="Top-K×5"></label>
-          <label>最小類似度<input id="min-similarity" type="number" min="-1" max="1" step="0.05" value="0.2"></label>
+          <label><span data-i18n="search.topK"></span><input id="top-k" type="number" min="1" max="100" value="4"></label>
+          <label><span data-i18n="search.minSimilarity"></span><input id="min-similarity" type="number" min="-1" max="1" step="0.05" value="0.2"></label>
         </div>
 
         <details>
-          <summary class="muted small">絞り込み・表示オプション</summary>
-          <label>付随ラベル（いずれか）<input id="filter-labels" list="finding-options" placeholder="結節影, 腫瘤（英語名も可）"></label>
+          <summary class="muted small" data-i18n="search.optionsSummary"></summary>
+          <label><span data-i18n="search.filterLabels"></span><input id="filter-labels" list="finding-options" data-i18n-placeholder="search.filterLabelsPlaceholder"></label>
           <datalist id="finding-options"></datalist>
-          <label>撮影方向<input id="filter-views" placeholder="PA, AP"></label>
-          <label class="inline"><input id="opt-thumb" type="checkbox" checked> サムネイルを表示</label>
-          <label class="inline"><input id="opt-overlay" type="checkbox" checked> 胸部野の輪郭を重ねて表示</label>
-          <label class="inline" title="1 段目（外観の埋め込み・近似）の候補を、2 段目の所見プロファイル（胸部野の分類器）で厳密に並べ直します。分類器が構成されていない場合と、テキストを含む検索では 1 段検索になります（応答の models.rerank を参照）。"><input id="opt-rerank" type="checkbox" checked> 所見プロファイルで再ランキング（2 段検索）</label>
-          <label class="inline"><input id="opt-async" type="checkbox"> 非同期実行（Prefer: respond-async）</label>
+          <label><span data-i18n="search.filterViews"></span><input id="filter-views" placeholder="PA, AP"></label>
+          <label class="inline"><input id="opt-thumb" type="checkbox" checked> <span data-i18n="search.optThumb"></span></label>
+          <label class="inline"><input id="opt-overlay" type="checkbox" checked> <span data-i18n="search.optOverlay"></span></label>
+          <label class="inline" data-i18n-title="search.optRerankTitle"><input id="opt-rerank" type="checkbox" checked> <span data-i18n="search.optRerank"></span></label>
+          <label class="inline"><input id="opt-async" type="checkbox"> <span data-i18n="search.optAsync"></span></label>
         </details>
 
-        <button id="run-search" class="primary">検索する</button>
+        <button id="run-search" class="primary" data-i18n="search.run"></button>
         <p id="search-error" class="error" hidden></p>
         <p id="search-status" class="muted small"></p>
       </div>
@@ -159,12 +166,12 @@
 
   <!-- 検索結果 -->
   <section class="panel" data-panel="results">
-    <div id="results-empty" class="card muted">まだ検索していません。</div>
+    <div id="results-empty" class="card muted" data-i18n="results.empty"></div>
     <div id="results" hidden>
       <div class="card">
         <div class="result-head">
           <div>
-            <h2>検索結果</h2>
+            <h2 data-i18n="results.heading"></h2>
             <p class="muted small" id="result-meta"></p>
           </div>
         </div>
@@ -179,40 +186,39 @@
   <!-- 取り込み -->
   <section class="panel" data-panel="ingest">
     <div class="card">
-      <h2>データ取り込み</h2>
+      <h2 data-i18n="ingest.heading"></h2>
       <p class="muted small">
-        大量画像はブラウザから送信せず、ローカル共有ボリューム上のパスを指定してジョブ登録します。
-        パスはコンテナ内のインポートルート（既定 <code>/imports</code>）配下に限定されます。
+        <span data-i18n="ingest.descriptionBefore"></span><code>/imports</code><span data-i18n="ingest.descriptionAfter"></span>
       </p>
-      <label>画像ディレクトリ<input id="image-root" value="/imports/nihcc/images"></label>
-      <label>診断紐づけ CSV<input id="csv-path" value="/imports/nihcc/Data_Entry_2017_v2020.csv"></label>
+      <label><span data-i18n="ingest.imageRoot"></span><input id="image-root" value="/imports/nihcc/images"></label>
+      <label><span data-i18n="ingest.csvPath"></span><input id="csv-path" value="/imports/nihcc/Data_Entry_2017_v2020.csv"></label>
       <div class="grid three">
-        <label>データセット版<input id="dataset-version" value="ChestX-ray14-2017"></label>
-        <label>CSV schema 版<input id="csv-schema-version" value="nihcc-data-entry-2017-v1"></label>
-        <label>件数上限（任意）<input id="sample-limit" type="number" min="1" placeholder="全件"></label>
+        <label><span data-i18n="ingest.datasetVersion"></span><input id="dataset-version" value="ChestX-ray14-2017"></label>
+        <label><span data-i18n="ingest.csvSchemaVersion"></span><input id="csv-schema-version" value="nihcc-data-entry-2017-v1"></label>
+        <label><span data-i18n="ingest.sampleLimit"></span><input id="sample-limit" type="number" min="1" data-i18n-placeholder="ingest.sampleLimitPlaceholder"></label>
       </div>
-      <label>重複時<select id="on-duplicate"><option value="SKIP">SKIP（既存を残す）</option><option value="REPLACE">REPLACE（再処理する）</option></select></label>
+      <label><span data-i18n="ingest.onDuplicate"></span><select id="on-duplicate"><option value="SKIP" data-i18n="ingest.onDuplicate.skip"></option><option value="REPLACE" data-i18n="ingest.onDuplicate.replace"></option></select></label>
       <div class="row">
-        <button id="run-validate" class="ghost">dry-run 検証</button>
-        <button id="run-ingest" class="primary" disabled>取り込み開始</button>
+        <button id="run-validate" class="ghost" data-i18n="ingest.validate"></button>
+        <button id="run-ingest" class="primary" disabled data-i18n="ingest.start"></button>
       </div>
       <p id="ingest-error" class="error" hidden></p>
       <div id="ingest-progress" hidden>
         <div class="progress-head">
-          <strong id="ingest-progress-label">待機中</strong>
+          <strong id="ingest-progress-label" data-i18n="job.status.PENDING"></strong>
           <span id="ingest-progress-percent" class="percent">-</span>
         </div>
         <div id="ingest-progress-track" class="progress" role="progressbar"
-             aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="取り込みの進捗">
+             aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-i18n-aria-label="ingest.progressAria">
           <div id="ingest-bar" class="bar"></div>
         </div>
         <p id="ingest-progress-detail" class="muted small"></p>
         <div class="row">
-          <button id="ingest-goto-jobs" class="ghost">取り込み履歴で詳細を見る</button>
+          <button id="ingest-goto-jobs" class="ghost" data-i18n="ingest.gotoJobs"></button>
         </div>
       </div>
       <div id="validation-result" hidden>
-        <h3>dry-run 結果</h3>
+        <h3 data-i18n="ingest.validationHeading"></h3>
         <dl class="kv" id="validation-counts"></dl>
         <div id="validation-issues"></div>
       </div>
@@ -222,29 +228,29 @@
   <!-- 取り込み履歴 -->
   <section class="panel" data-panel="jobs">
     <div class="card">
-      <h2>取り込み履歴</h2>
+      <h2 data-i18n="jobs.heading"></h2>
       <div class="row">
-        <label class="grow">ジョブID<input id="job-id" placeholder="UUID"></label>
-        <button id="track-job" class="ghost">進捗を表示</button>
+        <label class="grow"><span data-i18n="jobs.jobId"></span><input id="job-id" placeholder="UUID"></label>
+        <button id="track-job" class="ghost" data-i18n="jobs.track"></button>
       </div>
       <div id="job-progress" hidden>
         <div class="progress-head">
-          <strong id="job-progress-label">待機中</strong>
+          <strong id="job-progress-label" data-i18n="job.status.PENDING"></strong>
           <span id="job-progress-percent" class="percent">-</span>
         </div>
         <div id="job-progress-track" class="progress" role="progressbar"
-             aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="ジョブの進捗">
+             aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-i18n-aria-label="jobs.progressAria">
           <div id="job-bar" class="bar"></div>
         </div>
         <p id="job-progress-detail" class="muted small"></p>
         <dl class="kv" id="job-counts"></dl>
         <div id="job-errors"></div>
         <div class="row">
-          <a id="job-errors-link" class="ghost" href="#" download>エラー行 CSV をダウンロード</a>
-          <button id="job-retry" class="ghost">失敗分のみ再実行</button>
+          <a id="job-errors-link" class="ghost" href="#" download data-i18n="jobs.downloadErrors"></a>
+          <button id="job-retry" class="ghost" data-i18n="jobs.retry"></button>
         </div>
       </div>
-      <h3>最近のジョブ</h3>
+      <h3 data-i18n="jobs.recentHeading"></h3>
       <p id="recent-jobs-error" class="error" hidden></p>
       <div id="recent-jobs"></div>
     </div>
@@ -253,8 +259,8 @@
   <!-- 管理 -->
   <section class="panel" data-panel="admin">
     <div class="card">
-      <h2>管理</h2>
-      <button id="refresh-admin" class="ghost">再読み込み</button>
+      <h2 data-i18n="admin.heading"></h2>
+      <button id="refresh-admin" class="ghost" data-i18n="common.reload"></button>
       <div id="admin-content"></div>
     </div>
   </section>
@@ -263,11 +269,11 @@
   <section class="panel" data-panel="users">
     <div class="card">
       <div class="result-head">
-        <h2>ユーザー一覧</h2>
+        <h2 data-i18n="users.heading"></h2>
         <div class="row">
-          <label class="inline"><input id="users-include-inactive" type="checkbox" checked> 無効化済みも表示</label>
-          <button id="refresh-users" class="ghost">再読み込み</button>
-          <button id="new-user" class="primary">新規追加</button>
+          <label class="inline"><input id="users-include-inactive" type="checkbox" checked> <span data-i18n="users.includeInactive"></span></label>
+          <button id="refresh-users" class="ghost" data-i18n="common.reload"></button>
+          <button id="new-user" class="primary" data-i18n="users.new"></button>
         </div>
       </div>
       <p id="users-error" class="error" hidden></p>
@@ -276,46 +282,45 @@
     </div>
 
     <div id="user-form-card" class="card" hidden>
-      <h2 id="user-form-title">ユーザーの新規追加</h2>
+      <!-- 新規と編集で文言が変わるので app.js の userFormTitle が書く -->
+      <h2 id="user-form-title"></h2>
       <form id="user-form">
         <div class="grid two">
           <div>
-            <label>アカウント名 <span class="required">必須</span>
+            <label><span data-i18n="users.username"></span> <span class="required" data-i18n="common.required"></span>
               <input id="user-username" required maxlength="64" autocomplete="off">
             </label>
-            <label>権限 <span class="required">必須</span>
+            <label><span data-i18n="users.role"></span> <span class="required" data-i18n="common.required"></span>
               <select id="user-role" required>
-                <option value="viewer">viewer（参照のみ）</option>
-                <option value="operator">operator（取り込み実行）</option>
-                <option value="admin">admin（ユーザー管理・モデル切替）</option>
+                <option value="viewer" data-i18n="roles.viewer"></option>
+                <option value="operator" data-i18n="roles.operator"></option>
+                <option value="admin" data-i18n="roles.admin"></option>
               </select>
             </label>
-            <label>メールアドレス <span class="required">必須</span>
+            <label><span data-i18n="users.email"></span> <span class="required" data-i18n="common.required"></span>
               <input id="user-email" type="email" required maxlength="254" autocomplete="off">
             </label>
-            <label class="inline"><input id="user-active" type="checkbox" checked> 有効</label>
+            <label class="inline"><input id="user-active" type="checkbox" checked> <span data-i18n="common.active"></span></label>
           </div>
           <div>
-            <label>パスワード <span class="required" id="user-password-required">必須</span>
+            <label><span data-i18n="users.password"></span> <span class="required" id="user-password-required" data-i18n="common.required"></span>
               <input id="user-password" type="password" minlength="8" maxlength="128"
                      autocomplete="new-password">
             </label>
-            <label>パスワード（確認）
+            <label><span data-i18n="users.passwordConfirm"></span>
               <input id="user-password-confirm" type="password" minlength="8" maxlength="128"
                      autocomplete="new-password">
             </label>
             <p class="muted small policy-hint"></p>
-            <p class="muted small" id="user-password-hint" hidden>
-              編集時は、パスワードを変更する場合のみ入力してください。
-            </p>
-            <label>メモ
+            <p class="muted small" id="user-password-hint" hidden data-i18n="users.passwordEditHint"></p>
+            <label><span data-i18n="users.memo"></span>
               <input id="user-memo" maxlength="2000" autocomplete="off">
             </label>
           </div>
         </div>
         <div class="row">
-          <button type="submit" class="primary" id="user-save">保存</button>
-          <button type="button" class="ghost" id="user-cancel">キャンセル</button>
+          <button type="submit" class="primary" id="user-save" data-i18n="common.save"></button>
+          <button type="button" class="ghost" id="user-cancel" data-i18n="common.cancel"></button>
         </div>
         <p id="user-form-error" class="error" hidden></p>
       </form>
@@ -323,11 +328,11 @@
 
     <div id="user-detail-card" class="card" hidden>
       <div class="result-head">
-        <h2>ユーザー詳細</h2>
+        <h2 data-i18n="users.detailHeading"></h2>
         <div class="row">
-          <button id="user-detail-edit" class="ghost">編集</button>
-          <button id="user-detail-delete" class="ghost danger">削除</button>
-          <button id="user-detail-close" class="ghost">閉じる</button>
+          <button id="user-detail-edit" class="ghost" data-i18n="common.edit"></button>
+          <button id="user-detail-delete" class="ghost danger" data-i18n="common.delete"></button>
+          <button id="user-detail-close" class="ghost" data-i18n="common.close"></button>
         </div>
       </div>
       <dl class="kv" id="user-detail"></dl>
@@ -337,22 +342,22 @@
   <!-- パスワード変更（全ユーザー） -->
   <section class="panel" data-panel="password">
     <form id="password-form" class="card narrow">
-      <h2>パスワード変更</h2>
+      <h2 data-i18n="password.heading"></h2>
       <p class="muted small">
-        入力間違い防止のため、新しいパスワードは 2 回入力してください。<span class="policy-hint"></span>
+        <span data-i18n="password.description"></span><span class="policy-hint"></span>
       </p>
-      <label>現在のパスワード
+      <label><span data-i18n="password.current"></span>
         <input id="current-password" type="password" autocomplete="current-password" required maxlength="128">
       </label>
-      <label>新しいパスワード
+      <label><span data-i18n="common.newPassword"></span>
         <input id="new-password" type="password" autocomplete="new-password" required
                minlength="8" maxlength="128">
       </label>
-      <label>新しいパスワード（確認）
+      <label><span data-i18n="common.newPasswordConfirm"></span>
         <input id="new-password-confirm" type="password" autocomplete="new-password" required
                minlength="8" maxlength="128">
       </label>
-      <button type="submit" class="primary">パスワードを変更</button>
+      <button type="submit" class="primary" data-i18n="password.submit"></button>
       <p id="password-error" class="error" hidden></p>
       <p id="password-notice" class="notice" hidden></p>
     </form>

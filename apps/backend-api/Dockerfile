@@ -5,10 +5,11 @@ FROM python:3.11-slim AS base
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_ROOT_USER_ACTION=ignore
 
 RUN groupadd --system --gid 10001 app \
- && useradd --system --uid 10001 --gid app --home /srv --shell /usr/sbin/nologin app
+ && useradd --no-create-home --uid 10001 --gid app --home /srv --shell /usr/sbin/nologin app
 
 WORKDIR /srv
 

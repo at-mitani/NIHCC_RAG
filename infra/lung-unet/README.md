@@ -1,4 +1,5 @@
 # 肺野分割モデル（U-Net）の置き場所
+[English](README_EN.md) | 日本語
 
 `scripts/train_lung_unet.py` が書き出した `lung-unet.onnx` をここへ置く。
 compose が `/models/lung-unet` へ read-only で mount する。

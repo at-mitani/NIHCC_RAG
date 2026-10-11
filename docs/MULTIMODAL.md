@@ -1,4 +1,5 @@
 # マルチモーダル設計仕様書
+[English](MULTIMODAL_EN.md) | 日本語
 
 画像と言語を同じ空間で扱う部分、および胸部X線に固有の処理（胸部野・分類器・U-Net・
 多段検索）の設計。**開発者向け**である。
@@ -96,7 +97,7 @@ BiomedCLIP は画像とテキストを同じ 512 次元空間へ写す。これ�
 ### 3.1 前処理
 
 ```
-  原画像 → 百分位 clip（0.5% / 99.5%）→ 0-255 へ → 極性の統一 → 短辺 1024 へ縮小
+  原画像 → 百分位 clip（0.5% / 99.5%）→ 0-255 へ → 極性の統一 → 長辺 1024 へ縮小
 ```
 
 **極性の統一**が要る。正常な胸部X線では側方（肺野）が中央（脊柱・縦隔）より暗い。
@@ -133,14 +134,14 @@ BiomedCLIP は画像とテキストを同じ 512 次元空間へ写す。これ�
 |---|---|---|
 | 画像だけ（既定） | `profile`: 所見プロファイル（15 次元）で**全画像を厳密に**比べる | `profile-exact-full-scan` |
 | 画像だけ（`IMAGE_SEARCH_STRATEGY=coarse_to_fine` か要求の `strategy`） | `coarse_to_fine`: BiomedCLIP の HNSW で候補 → プロファイルで再スコア | `two-stage-coarse-to-fine-exact` |
-| 文章・画像＋文章 | `coarse_to_fine` か、プロファイルが使えなければ `coarse_only` | 同上 / `disabled-single-stage` |
+| 文章・画像＋文章 | `coarse_only`: BiomedCLIP だけ（2 段目がテキストを扱えないため。§2.3） | `disabled-single-stage` |
 | `rerank=false` | `coarse_only`: BiomedCLIP だけ | `disabled-single-stage` |
 
 ```
   画像だけ（既定）
     └→ 15 次元のプロファイルで全行を厳密に比べる → 上位 k 件（索引なし）
 
-  2 段検索（文章を含む検索、または切り戻したとき）
+  2 段検索（IMAGE_SEARCH_STRATEGY=coarse_to_fine の画像検索）
     ├→ 1 段目: HNSW で候補 k×4 件（近似。BiomedCLIP、胸部野 crop）
     └→ 2 段目: 候補だけを 15 次元のプロファイルで厳密に再スコア → 上位 k 件
 ```

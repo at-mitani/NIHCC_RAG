@@ -62,6 +62,7 @@ def handle(payload: dict[str, Any]) -> None:
             image=image,
             search_id=uuid.UUID(search_id),
             actor=payload.get("actor", "unknown"),
+            query_image_name=payload.get("query_image_name"),
         )
     except problem.ProblemError as exc:
         _LOG.warning("async search failed", extra={"fields": {"code": exc.code}})

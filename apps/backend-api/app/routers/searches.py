@@ -38,6 +38,7 @@ async def _read_image(upload: UploadFile | None) -> tuple[bytes | None, str | No
             "IMAGE_TOO_LARGE",
             "Payload too large",
             f"Uploaded image exceeds {MAX_UPLOAD} bytes.",
+            params={"max_bytes": MAX_UPLOAD},
         )
     try:
         facts = imaging.inspect(data, max_bytes=MAX_UPLOAD)
@@ -59,6 +60,8 @@ async def create_search(
     search_request = _parse_request(request_json)
     trace_id = getattr(request.state, "trace_id", str(uuid.uuid4()))
     content, sha256 = await _read_image(image)
+    # 検索元そのものを結果から外すのに使う（services.search.is_query_itself）
+    image_name = image.filename if image is not None else None
 
     # 設計書 9.5 の入力制約（mode と image/text の組み合わせ）
     if search_request.mode in ("IMAGE_TO_IMAGE", "HYBRID") and content is None:
@@ -81,7 +84,9 @@ async def create_search(
     go_async = asked_async and (median is None or median >= threshold or asked_async)
 
     if go_async:
-        _enqueue_async(search_id, search_request, content, sha256, principal.subject, trace_id)
+        _enqueue_async(
+            search_id, search_request, content, sha256, principal.subject, trace_id, image_name
+        )
         response.status_code = 202
         response.headers["Location"] = f"/api/v1/searches/{search_id}"
         return SearchAccepted(
@@ -90,7 +95,11 @@ async def create_search(
 
     try:
         result = search_service.execute_search(
-            search_request, image=content, search_id=search_id, actor=principal.subject
+            search_request,
+            image=content,
+            search_id=search_id,
+            actor=principal.subject,
+            query_image_name=image_name,
         )
     except problem.ProblemError as exc:
         search_service.persist_audit(
@@ -127,6 +136,7 @@ def _enqueue_async(
     sha256: str | None,
     actor: str,
     trace_id: str,
+    image_name: str | None = None,
 ) -> None:
     retention = config.env_int("QUERY_IMAGE_RETENTION_MINUTES", 60)
     with db.metadata_conn() as conn:
@@ -168,6 +178,7 @@ def _enqueue_async(
             "actor": actor,
             "request": request.model_dump(mode="json", by_alias=True),
             "has_image": content is not None,
+            "query_image_name": image_name,
         },
     )
 
@@ -256,22 +267,22 @@ def query_lung_outline(search_id: uuid.UUID, principal: Viewer, request: Request
 
 @router.get("/support/phrases", tags=["searches"])
 def phrases(principal: Viewer) -> dict[str, object]:
-    """TEXT_TO_IMAGE / HYBRID で使える定型日本語所見（設計書 7.3.2）と所見ラベルの対訳。
+    """TEXT_TO_IMAGE / HYBRID で使える定型所見（設計書 7.3.2）と所見ラベルの一覧。
 
-    所見ラベルの対訳を**画面に持たせず、ここから配る。** 表示名と入力の受け口は
-    同じ表から作らないと、画面には出ているのに絞り込みでは一致しない語が生まれる。
+    **英語だけを返す。** 表示名は画面の辞書（i18n/*.json の phrase.* / finding.*）が
+    表示言語に訳す。日本語の表示名は、日本語入力を英語化する表（定型所見は
+    ja_en_medical.json、所見名は csvspec.FINDING_LABELS_JA）と同じ語でなければ、
+    画面に出ている語を入力しても解決できない。両者が一致することは
+    tests/unit/test_frontend_i18n.py が検査する。
     """
     return {
         "translation_model_version": text_norm.TRANSLATION_MODEL_VERSION,
-        "note": "日本語入力は承認済みローカル辞書のみで英語化する。外部翻訳 API へは送信しない。",
-        "phrases": text_norm.known_phrases(),
-        "findings": [
-            {
-                "en": label,
-                "ja": csvspec.finding_label_ja(label),
-                #: 絞り込みで受け付ける言い換え。画面の入力補助に使う。
-                "aliases": list(csvspec.FINDING_ALIASES_JA.get(label, ())),
-            }
-            for label in csvspec.ALLOWED_FINDINGS
+        "note": "Japanese input is translated to English only with the approved local "
+        "dictionary. It is never sent to an external translation API.",
+        # 同じ英語に複数の日本語が対応する（所見なし / 異常なし など）ので 1 つにまとめる
+        "phrases": [
+            {"en": en}
+            for en in dict.fromkeys(phrase["en"] for phrase in text_norm.known_phrases())
         ],
+        "findings": [{"en": label} for label in csvspec.ALLOWED_FINDINGS],
     }

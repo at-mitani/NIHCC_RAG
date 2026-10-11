@@ -192,7 +192,7 @@ def _check_two_stage(result: dict, label: str = "") -> None:
     )
     check(
         f"{label}所見の推定に「診断ではない」見出しが付く",
-        "診断ではありません" in (result.get("estimate_label") or ""),
+        "not a diagnosis" in (result.get("estimate_label") or ""),
         result.get("estimate_label", ""),
     )
     check(
@@ -430,7 +430,7 @@ def main() -> int:
             check("検索元の胸部野の画像が返る", bool(result.get("query_chest_url")),
                   str(result.get("query_chest_url")))
             check("研究用途の警告が含まれる",
-                  any("研究用途" in warning for warning in result.get("warnings", [])))
+                  any("research use" in warning for warning in result.get("warnings", [])))
             check("モデル版が応答に含まれる",
                   bool(result.get("models", {}).get("embedding")),
                   result.get("models", {}).get("embedding", ""))

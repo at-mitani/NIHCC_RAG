@@ -1,4 +1,5 @@
 # ユーザー管理・パスワード運用
+[English](user-management_EN.md) | 日本語
 
 利用者は Metadata DB の `app_user` で管理し、管理画面と API から運用します。
 `LOCAL_USERS` 環境変数は初期ユーザーの作成にだけ使います（[7](#7-初期ユーザーブートストラップ)）。

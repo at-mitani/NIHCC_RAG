@@ -156,14 +156,14 @@ def extract_chest(
     segmenter = segmentation.from_profile(profile)
     if segmenter is None:
         raise ExtractionError(
-            "PROFILE_NOT_UNET", f"{profile.name} は U-Net を使わないので心臓 mask が無い"
+            "PROFILE_NOT_UNET", f"profile {profile.name} does not use a U-Net, so there is no heart mask"
         )
     gray, scale, _ = normalize(decode_image(data), profile)
     seg = segmenter.predict(gray)
     lung = cv2.bitwise_or(seg.right, seg.left)
     lung_area = float((lung > 0).mean())
     if lung_area < MIN_LUNG_AREA:
-        raise ExtractionError("LUNG_TOO_SMALL", f"肺野が画像の {lung_area:.1%} しかない")
+        raise ExtractionError("LUNG_TOO_SMALL", f"the lung fields cover only {lung_area:.1%} of the image")
     chest = chest_mask(seg.right, seg.left, seg.heart)
     flags = _assess(seg.right, seg.left, lung_area, profile)
     return ChestExtraction(

@@ -1,5 +1,7 @@
 # 手元の PC への環境構築手順
 
+[English](SETUP_LOCAL_EN.md) | 日本語
+
 Windows（Docker Desktop）または Linux の作業機に一式を構築する。
 
 GPU 付き EC2 への構築は [SETUP_EC2.md](SETUP_EC2.md)、日々の運用は

@@ -44,11 +44,12 @@ import httpx
 import numpy as np
 from nihcc_rag import config, csvspec, db, imaging, problem, rerank, text_norm
 from nihcc_rag.contract import (
-    RESEARCH_WARNING,
+    RESEARCH_MESSAGE,
     SearchQueryEcho,
     SearchRequest,
     SearchResponse,
     SearchResultItem,
+    ServerMessage,
 )
 
 from . import chest as chest_store
@@ -79,18 +80,64 @@ def _vector_query_timeout_ms() -> int:
     return clamped
 
 
-LOW_CONFIDENCE_WARNING = (
-    "検索画像の胸部野の抽出が不確かです（片肺が見つからない・左右差が大きいなど）。"
-    "結果は参考値として扱ってください。"
+#: 検索の警告。文言は英語で、画面は id（辞書の server.<id>）で表示言語に訳す。
+LOW_CONFIDENCE_WARNING = ServerMessage(
+    id="QUERY_ROI_UNCERTAIN",
+    text="Chest region extraction for the query image is uncertain (e.g. one lung was not "
+    "found, or the left-right difference is large). Treat the results as reference only.",
 )
-RERANK_PARTIAL_WARNING = (
-    "所見プロファイルが未登録の画像が候補に含まれるため、一部の候補は 1 段目の"
-    "順位で返しています。再取り込みで解消します。"
+RERANK_PARTIAL_WARNING = ServerMessage(
+    id="RERANK_PARTIAL",
+    text="Some candidates have no finding profile registered, so they are returned in their "
+    "stage-1 order. Re-ingesting them resolves this.",
 )
-RERANK_TEXT_UNAVAILABLE_WARNING = (
-    "所見プロファイルは画像から作るため、テキストを含む検索では再ランキングを"
-    "行いません（画像のみの検索では有効です）。"
+RERANK_TEXT_UNAVAILABLE_WARNING = ServerMessage(
+    id="RERANK_TEXT_UNAVAILABLE",
+    text="Finding profiles are built from images, so re-ranking is not applied to searches "
+    "that include text (it is applied to image-only searches).",
 )
+SELF_MATCH_EXCLUDED_WARNING = ServerMessage(
+    id="SELF_MATCH_EXCLUDED",
+    text="The same image as the query (same file name, similarity 1.0) is excluded from "
+    "the results.",
+)
+BUDGET_EXHAUSTED_WARNING = ServerMessage(
+    id="RERANK_BUDGET_EXHAUSTED",
+    text="The stage-1 search used up the timeout budget, so re-ranking was skipped. "
+    "Review VECTOR_QUERY_TIMEOUT_MS or VECTOR_STAGE1_MULTIPLIER.",
+)
+
+
+def _suppressed_warning(confidence: float, threshold: float) -> ServerMessage:
+    params = {"confidence": f"{confidence:.2f}", "threshold": f"{threshold:.2f}"}
+    return ServerMessage(
+        id="RESULTS_SUPPRESSED_LOW_CONFIDENCE",
+        text=f"Results were suppressed because the chest region confidence of the query image "
+        f"({params['confidence']}) is below the threshold ({params['threshold']}).",
+        params=params,
+    )
+
+
+def _warning_fields(warnings: list[ServerMessage]) -> dict[str, list]:
+    """応答の warnings（英語の文）と warning_details（訳すための詳細）を作る。"""
+    unique = list({message.text: message for message in warnings}.values())
+    return {"warnings": [message.text for message in unique], "warning_details": unique}
+
+
+def _image_name(name: str | None) -> str:
+    """比較用のファイル名。ブラウザによってはパス付きで送られるので末尾だけを使う。"""
+    return (name or "").replace("\\", "/").rsplit("/", 1)[-1].strip().casefold()
+
+
+def is_query_itself(query_image_name: str | None, candidate_name: str | None, similarity: float) -> bool:
+    """候補が検索元そのもの（取り込み済みの同じ画像）か。
+
+    同じ画像を検索しても比べる相手が自分になるだけなので、結果から外す。
+    類似度は表示と同じ桁（小数 4 桁）で 1.0 のものに限る。ファイル名が同じでも
+    中身の違う画像（加工した画像など）は 1.0 にならないので残る。
+    """
+    query = _image_name(query_image_name)
+    return bool(query) and query == _image_name(candidate_name) and round(float(similarity), 4) >= 1.0
 
 
 def _client(url: str, timeout: float) -> httpx.Client:
@@ -159,7 +206,11 @@ def _item(
 
 
 def _lung_items(
-    fanout: dict | None, metadata: dict, estimates: dict, request: SearchRequest
+    fanout: dict | None,
+    metadata: dict,
+    estimates: dict,
+    request: SearchRequest,
+    query_image_name: str | None = None,
 ) -> tuple[list, str]:
     """胸郭ランキングを組み立て、その状態を返す。「候補が無い」「未充填」「失敗」を区別する。"""
     if fanout is None:
@@ -174,6 +225,8 @@ def _lung_items(
         image_id = str(candidate["image_id"])
         meta = metadata.get(image_id)
         if meta is None:
+            continue
+        if is_query_itself(query_image_name, meta["source_image_name"], candidate["similarity"]):
             continue
         items.append(
             _item(
@@ -237,8 +290,8 @@ def _normalise_text(request: SearchRequest) -> tuple[str | None, str | None, str
     except text_norm.UntranslatableText as exc:
         raise problem.unprocessable(
             "TEXT_NOT_TRANSLATABLE",
-            "日本語の自由文は承認済みローカル辞書で英語化できませんでした。"
-            "英語、または登録済みの定型日本語所見で入力してください。",
+            "Japanese free text could not be translated to English with the approved local "
+            "dictionary. Enter English, or one of the registered standard Japanese findings.",
             errors=[{"field": "text", "reason": f"unresolved: {', '.join(exc.unresolved[:5])}"}],
         ) from exc
     return normalized.original, normalized.english, normalized.translation_model_version
@@ -255,9 +308,12 @@ def _roi_for_query(image: bytes, timeout: float) -> dict[str, Any]:
         )
     if response.status_code == 422:
         body = response.json()
+        # 画面は抽出できなかった理由（code）ごとに訳す。辞書に無い理由は
+        # ROI_EXTRACTION_FAILED の文言に英語の detail を添えて出す
         raise problem.unprocessable(
             body.get("code", "ROI_EXTRACTION_FAILED"),
-            f"検索画像から胸部野を抽出できませんでした: {body.get('detail', '')}",
+            f"Could not extract the chest region from the query image: {body.get('detail', '')}",
+            params={"reason": body.get("detail", "")},
         )
     if response.status_code >= 500:
         raise problem.dependency_unavailable("roi-service")
@@ -320,17 +376,17 @@ def _hydrate(image_ids: list[uuid.UUID], request: SearchRequest) -> dict[str, di
     # 捨てると「絞り込みが効かない」のか「綴りが違う」のかが利用者に分からない。
     wanted_labels, unresolved = csvspec.resolve_findings(request.filters.finding_labels_any)
     if unresolved:
+        params = {
+            "unresolved": ", ".join(unresolved),
+            "allowed": ", ".join(csvspec.ALLOWED_FINDINGS),
+        }
         raise problem.unprocessable(
             "FINDING_LABEL_UNKNOWN",
-            "所見名を解決できませんでした: " + "、".join(unresolved)
-            + "。指定できるのは "
-            + "、".join(
-                f"{csvspec.finding_label_ja(label)}（{label}）"
-                for label in csvspec.ALLOWED_FINDINGS
-            )
-            + " です。",
+            f"Could not resolve the finding names: {params['unresolved']}. "
+            f"Allowed values: {params['allowed']} (Japanese names are also accepted).",
             errors=[{"field": "filters.finding_labels_any", "value": value}
                     for value in unresolved],
+            params=params,
         )
     wanted = set(wanted_labels)
     result: dict[str, dict[str, Any]] = {}
@@ -438,6 +494,7 @@ def execute_search(
     search_id: uuid.UUID,
     actor: str,
     roi_min_confidence: float | None = None,
+    query_image_name: str | None = None,
 ) -> SearchResponse:
     started = time.perf_counter()
     timeout = config.env_int("API_SEARCH_TIMEOUT_MS", 5000) / 1000.0
@@ -446,7 +503,7 @@ def execute_search(
         if roi_min_confidence is not None
         else config.env_float("ROI_MIN_CONFIDENCE", 0.35)
     )
-    warnings = [RESEARCH_WARNING]
+    warnings: list[ServerMessage] = [RESEARCH_MESSAGE]
 
     original_text, english_text, translation_version = _normalise_text(request)
 
@@ -582,10 +639,15 @@ def execute_search(
         quality = chest_store.quality_by_image(conn, ids)
 
     items: list[SearchResultItem] = []
+    self_excluded = False
     for candidate in found["candidates"]:
         image_id = str(candidate["image_id"])
         meta = metadata.get(image_id)
         if meta is None:
+            continue
+        # 検索元そのものは比べる意味が無いので外す
+        if is_query_itself(query_image_name, meta["source_image_name"], candidate["similarity"]):
+            self_excluded = True
             continue
         items.append(
             _item(
@@ -607,22 +669,21 @@ def execute_search(
 
     if query_confidence is not None and query_confidence < min_confidence:
         # 低信頼度の検索元は結果を抑制し、警告付きで返す（設計書 7.2.2）
-        warnings.append(
-            f"検索画像の胸部野の信頼度 {query_confidence:.2f} が閾値 {min_confidence:.2f} "
-            "未満のため結果を抑制しました。"
-        )
+        warnings.append(_suppressed_warning(query_confidence, min_confidence))
         items = []
     elif query_quality == "ROI_UNCERTAIN":
         warnings.append(LOW_CONFIDENCE_WARNING)
     if found.get("rerank_status") in {"PARTIAL_COVERAGE", "NO_COVERAGE"}:
         warnings.append(RERANK_PARTIAL_WARNING)
     if found.get("rerank_status") == "BUDGET_EXHAUSTED":
-        warnings.append(
-            "1 段目の検索で timeout 予算を使い切ったため、再ランキングを省略しました。"
-            "VECTOR_QUERY_TIMEOUT_MS または VECTOR_STAGE1_MULTIPLIER の見直しが必要です。"
-        )
+        warnings.append(BUDGET_EXHAUSTED_WARNING)
 
-    lung_items, lung_status = _lung_items(lung_found, metadata, estimates, request)
+    if self_excluded:
+        warnings.append(SELF_MATCH_EXCLUDED_WARNING)
+
+    lung_items, lung_status = _lung_items(
+        lung_found, metadata, estimates, request, query_image_name
+    )
 
     # 推定に使った分類器の版。検索元の推定があればその版、無ければ候補の多数派
     estimate_versions = Counter(v for v, _ in estimates.values())
@@ -688,7 +749,8 @@ def execute_search(
         ),
         lung_shape_results=lung_items,
         lung_shape_status=lung_status,
-        warnings=list(dict.fromkeys(warnings)),
+        # 同じ警告は 1 度だけ。英語の文と訳すための詳細を同じ順で返す
+        **_warning_fields(warnings),
         duration_ms=duration_ms,
     )
 

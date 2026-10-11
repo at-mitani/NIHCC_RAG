@@ -50,6 +50,8 @@ body {
 .logo { font-weight: 700; color: var(--accent); letter-spacing: .06em; }
 .title { font-weight: 600; }
 .session { display: flex; gap: 10px; align-items: center; }
+/* 表示言語。フォームの select は幅 100% なので、ヘッダでは中身の幅に戻す */
+.session .lang-select { width: auto; margin-top: 0; padding: 4px 8px; }
 
 .research-banner {
   margin: 0; padding: 8px 20px; background: var(--warn-bg); color: var(--warn);

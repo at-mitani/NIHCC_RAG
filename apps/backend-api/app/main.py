@@ -18,7 +18,7 @@ _LOG = logging.getLogger("backend-api")
 
 app = service.create_app(
     "backend-api",
-    title="NIHCC 胸部X線画像検索ローカルRAG API",
+    title="NIHCC Chest X-ray Image Search Local RAG API",
 )
 app.include_router(system.router)
 app.include_router(ingestions.router)

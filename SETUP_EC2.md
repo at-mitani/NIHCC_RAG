@@ -1,5 +1,7 @@
 # EC2（g5.2xlarge / Ubuntu 26.04）構築手順
 
+[English](SETUP_EC2_EN.md) | 日本語
+
 NIHCC 胸部X線画像検索ローカルRAGシステムを AWS EC2 の GPU インスタンス上に一から構築し、
 全 112,120 枚を取り込んで停止するまでの手順です。各設定の意味や設計は
 [README.md](README.md) を参照してください。

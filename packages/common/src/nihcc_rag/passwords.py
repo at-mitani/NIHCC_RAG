@@ -42,8 +42,9 @@ def validate_policy(password: str, *, field: str = "password") -> str:
     if len(candidate) < MIN_LENGTH or len(candidate) > MAX_LENGTH:
         raise problem.unprocessable(
             "PASSWORD_POLICY_VIOLATION",
-            f"パスワードは {MIN_LENGTH} 文字以上 {MAX_LENGTH} 文字以下で入力してください。",
+            f"Enter a password of {MIN_LENGTH} to {MAX_LENGTH} characters.",
             errors=[{"field": field, "reason": f"length must be {MIN_LENGTH}..{MAX_LENGTH}"}],
+            params={"min": MIN_LENGTH, "max": MAX_LENGTH},
         )
     return candidate
 
@@ -54,7 +55,7 @@ def validate_confirmation(password: str, confirmation: str, *, field: str = "pas
     if not hmac.compare_digest(candidate, normalize(confirmation)):
         raise problem.unprocessable(
             "PASSWORD_CONFIRMATION_MISMATCH",
-            "確認用パスワードが一致しません。",
+            "The confirmation password does not match.",
             errors=[{"field": f"{field}_confirmation", "reason": "does not match"}],
         )
     return candidate

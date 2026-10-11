@@ -1,4 +1,5 @@
 # 設計仕様書
+[English](DESIGN_EN.md) | 日本語
 
 NIHCC 胸部X線画像検索ローカルRAGシステムの構成と設計。**開発者向け**である。
 
@@ -110,7 +111,7 @@ roi-service と embedding-service は受け取った画像を処理して返す�
 | `prometheus` / `grafana` | 公式 | 監視 | 9090 / 3000 |
 | `vector-coordinator` / `vector-worker-1..5` | Citus + pgvector | ベクトル（coordinator 1 + worker 5） | - |
 
-**全サービスが `read_only: true`** で、書けるのは `/tmp`（tmpfs）だけである。
+**アプリのコンテナ（frontend・backend-api・各 worker・search-aggregator・roi-service・embedding-service）は `read_only: true`** で、書けるのは `/tmp`（tmpfs）だけである。
 `cap_drop: ALL` と `no-new-privileges` も付けている。この堅牢化は学習や backfill の
 ような書き込みを伴う作業と噛み合わないので、そちらは別のイメージと `docker run` で
 行う（[OPERATIONS.md](OPERATIONS.md)）。
@@ -163,7 +164,7 @@ worker 5 台、shard 30、1 台あたり 6）である。走査は worker 5 台�
              └→ search-aggregator → ベクトル用クラスタ
                   │
                   ├→ 画像だけ: 所見プロファイル（15 次元）で全画像を厳密に比べる（既定）
-                  ├→ 文章を含む: HNSW（BiomedCLIP）で候補 → 所見プロファイルで再スコア
+                  ├→ 文章を含む: HNSW（BiomedCLIP）の 1 段検索（プロファイルはテキストを扱えない）
                   └→ 胸郭の形（embedding_lung）
 ```
 
@@ -172,7 +173,7 @@ worker 5 台、shard 30、1 台あたり 6）である。走査は worker 5 台�
 対し全件検索 2.43、ベクトル検索の p95 は 290 ms に対し 24 ms）。`IMAGE_SEARCH_STRATEGY`
 で 2 段検索に切り替えられる。
 
-応答が 2 秒を超えると非同期へ切り替わり、`search-worker` が引き取って
+要求に `Prefer: respond-async` が付いていれば非同期で受け付け、`search-worker` が引き取って
 `search_result` へ書く。画面は `search_id` で polling する。
 
 多段検索の詳細は [MULTIMODAL.md](MULTIMODAL.md) §4。

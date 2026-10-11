@@ -13,15 +13,19 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_ROOT_USER_ACTION=ignore \
     HF_HOME=/models/hf-cache \
     TRANSFORMERS_OFFLINE=0
 
+# apt の対話プロンプトを出さない（build 中は端末が無く、debconf が警告を出す）。
+# ENV ではなく ARG にして、実行時のイメージには残さない。
+ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
  && apt-get install -y --no-install-recommends libgomp1 \
  && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --system --gid 10001 app \
- && useradd --system --uid 10001 --gid app --home /srv --shell /usr/sbin/nologin app
+ && useradd --no-create-home --uid 10001 --gid app --home /srv --shell /usr/sbin/nologin app
 
 WORKDIR /srv
 

@@ -1,5 +1,7 @@
 # 検索品質と病変の位置の地図の測定（EC2）
 
+[English](chest-evaluation_EN.md) | 日本語
+
 所見プロファイルを有効にして全量を取り込んだ環境（[chest-profile-setup.md](chest-profile-setup.md)）で
 行う測定。どちらも取り込み直しや migration は要らない。
 

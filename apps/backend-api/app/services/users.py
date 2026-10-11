@@ -84,14 +84,14 @@ def _conflict(exc: Exception) -> problem.ProblemError:
             409,
             "EMAIL_ALREADY_EXISTS",
             "Conflict",
-            "このメールアドレスは既に登録されています。",
+            "This email address is already registered.",
             errors=[{"field": "email", "reason": "already exists"}],
         )
     return problem.ProblemError(
         409,
         "USERNAME_ALREADY_EXISTS",
         "Conflict",
-        "このアカウント名は既に使用されています。",
+        "This account name is already in use.",
         errors=[{"field": "username", "reason": "already exists"}],
     )
 
@@ -151,7 +151,8 @@ def update_user(user_id: uuid.UUID, payload, *, actor: str, actor_user_id: str |
         if losing_admin and _active_admin_count(conn, excluding=str(user_id)) == 0:
             raise problem.unprocessable(
                 "LAST_ADMIN_PROTECTED",
-                "有効な管理者が 0 人になる変更はできません。先に別の管理者を用意してください。",
+                "This change would leave no active administrators. Set up another "
+                "administrator first.",
             )
 
     if payload.role is not None:
@@ -173,7 +174,7 @@ def update_user(user_id: uuid.UUID, payload, *, actor: str, actor_user_id: str |
         params["password_hash"] = passwords.hash_password(password)
 
     if not updates:
-        raise problem.unprocessable("NO_FIELDS_TO_UPDATE", "更新する項目がありません。")
+        raise problem.unprocessable("NO_FIELDS_TO_UPDATE", "There are no fields to update.")
 
     updates.append("updated_by = %(actor)s")
     updates.append("updated_at = now()")
@@ -216,12 +217,15 @@ def delete_user(user_id: uuid.UUID, *, actor_user_id: str | None) -> None:
             raise problem.not_found("user")
         if actor_user_id is not None and str(user_id) == actor_user_id:
             raise problem.unprocessable(
-                "SELF_DELETE_FORBIDDEN", "自分自身のアカウントは削除できません。"
+                "SELF_DELETE_FORBIDDEN", "You cannot delete your own account."
             )
         if current["role"] == "admin" and _active_admin_count(conn, excluding=str(user_id)) == 0:
             raise problem.unprocessable(
                 "LAST_ADMIN_PROTECTED",
-                "最後の管理者アカウントは削除できません。先に別の管理者を用意してください。",
+                "The last administrator account cannot be deleted. Set up another "
+                "administrator first.",
+                # 更新時の LAST_ADMIN_PROTECTED とは文言が違うので、訳す鍵を分ける
+                message_id="LAST_ADMIN_DELETE_PROTECTED",
             )
         db.execute(conn, "DELETE FROM app_user WHERE user_id = %s", (str(user_id),))
     auth.invalidate_cache(str(user_id))
@@ -244,13 +248,13 @@ def change_own_password(user_id: str, payload) -> None:
     if not passwords.verify_password(payload.current_password, row["password_hash"]):
         raise problem.unprocessable(
             "CURRENT_PASSWORD_MISMATCH",
-            "現在のパスワードが正しくありません。",
+            "The current password is incorrect.",
             errors=[{"field": "current_password", "reason": "mismatch"}],
         )
     if passwords.verify_password(new_password, row["password_hash"]):
         raise problem.unprocessable(
             "PASSWORD_UNCHANGED",
-            "新しいパスワードが現在のパスワードと同じです。",
+            "The new password is the same as the current password.",
             errors=[{"field": "new_password", "reason": "must differ from current password"}],
         )
 
@@ -359,7 +363,7 @@ def confirm_password_reset(payload) -> str:
             ):
                 raise problem.unprocessable(
                     "RESET_TOKEN_INVALID",
-                    "この URL は無効です。パスワード再設定をやり直してください。",
+                    "This URL is invalid. Please start the password reset again.",
                 )
 
             expired = db.fetch_one(
@@ -371,8 +375,9 @@ def confirm_password_reset(payload) -> str:
             if expired and expired["expired"]:
                 raise problem.unprocessable(
                     "RESET_TOKEN_EXPIRED",
-                    f"この URL は有効期限（{RESET_TOKEN_TTL_MINUTES} 分）を過ぎています。"
-                    "パスワード再設定をやり直してください。",
+                    f"This URL has expired (valid for {RESET_TOKEN_TTL_MINUTES} minutes). "
+                    "Please start the password reset again.",
+                    params={"ttl": RESET_TOKEN_TTL_MINUTES},
                 )
 
             db.execute(

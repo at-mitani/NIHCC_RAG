@@ -119,7 +119,8 @@ def test_the_fields_the_search_screen_reads_exist() -> None:
 def test_estimates_are_labelled_as_not_a_diagnosis() -> None:
     """推定には「診断ではない」見出しが必ず付く（推定の表示規則）。
 
-    見出しは応答の estimate_label を使い、無いときも同じ文言へ倒す。
+    見出しは応答の estimate_label を使い、無いときと日本語以外の表示では辞書の
+    results.estimateHeading へ倒す。各言語の文言は test_frontend_i18n で固定する。
     """
     body = function_body(APP_JS.read_text(encoding="utf-8"), "estimateBlock")
-    assert "診断ではありません" in body
+    assert "t('results.estimateHeading')" in body

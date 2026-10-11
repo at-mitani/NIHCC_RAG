@@ -6,7 +6,12 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_ROOT_USER_ACTION=ignore \
     OPENCV_IO_MAX_IMAGE_PIXELS=67108864
+
+# apt の対話プロンプトを出さない（build 中は端末が無く、debconf が警告を出す）。
+# ENV ではなく ARG にして、実行時のイメージには残さない。
+ARG DEBIAN_FRONTEND=noninteractive
 
 # opencv-python-headless / scikit-image の実行時共有ライブラリ
 RUN apt-get update \
@@ -14,7 +19,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --system --gid 10001 app \
- && useradd --system --uid 10001 --gid app --home /srv --shell /usr/sbin/nologin app
+ && useradd --no-create-home --uid 10001 --gid app --home /srv --shell /usr/sbin/nologin app
 
 WORKDIR /srv
 
